@@ -1,0 +1,8 @@
+{
+  "name": "DevProof - AI Technical Interview Coach",
+  "description": "A comprehensive AI-powered technical interview preparation and skill validation platform that conducts realistic interviews, evaluates coding skills in real-time, and generates verifiable credentials.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
