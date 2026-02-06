@@ -47,6 +47,14 @@ router.post('/:sessionId/evaluate', async (req, res) => {
       `[${t.speaker === 'user' ? 'USER' : 'AI'}]: ${t.text}`
     ).join('\n');
 
+    // Build submitted code section
+    const codingQuestions = questions.filter(q => q.submittedCode && q.submittedCode.trim());
+    const submittedCodeText = codingQuestions.length > 0
+      ? codingQuestions.map(q =>
+          `### Question: "${q.text}"\nLanguage: ${q.codeLanguage || 'python'}\n\`\`\`${q.codeLanguage || 'python'}\n${q.submittedCode}\n\`\`\``
+        ).join('\n\n')
+      : '';
+
     // Call Gemini for evaluation
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -68,7 +76,9 @@ ${questionList || 'No structured questions available'}
 ## Interview Transcript (chronological)
 ${transcriptText || 'No transcript data available'}
 
+${submittedCodeText ? `## Submitted Code\nEvaluate for correctness, efficiency, code style, and edge case handling.\n\n${submittedCodeText}\n` : ''}
 ## Instructions
+If submitted code is available, heavily weight the coding score on actual code quality and correctness.
 1. Score each of the 4 categories (0-100) using the rubric above
 2. For EACH question listed above, evaluate how well the candidate answered it — provide a score (0-100), detailed feedback (2-3 sentences), and list the topics the candidate covered
 3. Write a 2-3 sentence overall summary of the candidate's performance

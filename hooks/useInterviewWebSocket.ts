@@ -49,6 +49,13 @@ export const useInterviewWebSocket = (sessionId: string) => {
 
   const { addTranscript, updatePartialTranscript, finalizeTranscript, setAISpeaking, updateSession } = useAppStore();
 
+  // Code event callback ref
+  const codeCallbackRef = useRef<((type: string, data?: any) => void) | null>(null);
+
+  const onCodeEvent = useCallback((callback: (type: string, data?: any) => void) => {
+    codeCallbackRef.current = callback;
+  }, []);
+
   // VAD callbacks ref (updated when WebSocket connects)
   const vadCallbacksRef = useRef({
     onSpeechStart: () => {},
@@ -56,19 +63,22 @@ export const useInterviewWebSocket = (sessionId: string) => {
   });
 
   // Setup VAD at hook level (proper React hook usage)
-  const { processAudioLevel } = useVoiceActivityDetection(
+  const { processAudioLevel, cleanup: vadCleanup } = useVoiceActivityDetection(
     () => vadCallbacksRef.current.onSpeechStart(),
     () => vadCallbacksRef.current.onSpeechEnd()
   );
 
   const disconnect = useCallback(() => {
     console.log('Disconnecting WebSocket...');
+    vadCleanup(); // Stop VAD timers before closing socket
 
     // Reset ready flag
     isBackendReadyRef.current = false;
 
     if (wsRef.current) {
-      wsRef.current.send(JSON.stringify({ type: 'disconnect' }));
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({ type: 'disconnect' }));
+      }
       wsRef.current.close();
       wsRef.current = null;
     }
@@ -100,7 +110,7 @@ export const useInterviewWebSocket = (sessionId: string) => {
 
     setStatus('disconnected');
     setAISpeaking(false);
-  }, [setAISpeaking]);
+  }, [setAISpeaking, vadCleanup]);
 
   const connect = useCallback(async () => {
     if (status !== 'disconnected') return;
@@ -184,13 +194,16 @@ export const useInterviewWebSocket = (sessionId: string) => {
             // Update VAD callbacks now that WebSocket is ready
             vadCallbacksRef.current = {
               onSpeechStart: () => {
-                console.log('🎤 User speech started');
-                ws.send(JSON.stringify({ type: 'user_speech_started' }));
-                // Barge-in disabled: AI continues speaking to completion
+                if (ws.readyState === WebSocket.OPEN) {
+                  console.log('🎤 User speech started');
+                  ws.send(JSON.stringify({ type: 'user_speech_started' }));
+                }
               },
               onSpeechEnd: () => {
-                console.log('🔇 User speech ended');
-                ws.send(JSON.stringify({ type: 'user_speech_ended' }));
+                if (ws.readyState === WebSocket.OPEN) {
+                  console.log('🔇 User speech ended');
+                  ws.send(JSON.stringify({ type: 'user_speech_ended' }));
+                }
               }
             };
             break;
@@ -303,6 +316,18 @@ export const useInterviewWebSocket = (sessionId: string) => {
             // Navigate to results page (handled in InterviewRoom)
             break;
 
+          case 'code_result':
+            codeCallbackRef.current?.('result', message);
+            break;
+
+          case 'code_running':
+            codeCallbackRef.current?.('running');
+            break;
+
+          case 'code_submitted':
+            codeCallbackRef.current?.('submitted');
+            break;
+
           case 'state_changed':
             // Orchestrator state update
             console.log('🎭 State changed:', message.state);
@@ -351,5 +376,5 @@ export const useInterviewWebSocket = (sessionId: string) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { status, connect, disconnect, sendMessage };
+  return { status, connect, disconnect, sendMessage, onCodeEvent };
 };

@@ -103,6 +103,8 @@ router.post('/generate-plan', async (req, res) => {
       - mid: intermediate design patterns, moderate algorithms, system tradeoffs
       - senior: advanced architecture, complex algorithms, distributed systems, leadership scenarios
 
+      For each coding question, include 3-5 test cases with input/expected output pairs covering normal and edge cases.
+
       Resume: ${safeResume}
       JD: ${safeJd}
     `;
@@ -122,7 +124,18 @@ router.post('/generate-plan', async (req, res) => {
               text: { type: Type.STRING },
               type: { type: Type.STRING, description: 'behavioral, technical, or coding' },
               difficulty: { type: Type.STRING, description: `Must be "${selectedDifficulty}"` },
-              expectedTopics: { type: Type.ARRAY, items: { type: Type.STRING } }
+              expectedTopics: { type: Type.ARRAY, items: { type: Type.STRING } },
+              testCases: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    input: { type: Type.STRING },
+                    expectedOutput: { type: Type.STRING }
+                  },
+                  required: ['input', 'expectedOutput']
+                }
+              }
             },
             required: ['id', 'text', 'type', 'difficulty']
           }
@@ -148,8 +161,16 @@ router.post('/generate-plan', async (req, res) => {
       { id: '1', text: 'Tell me about a difficult technical challenge you solved recently.', type: 'behavioral', difficulty: fallbackDifficulty },
       { id: '2', text: 'Explain the concept of Big O notation and why it matters.', type: 'technical', difficulty: fallbackDifficulty },
       { id: '3', text: 'What is the difference between a process and a thread in a modern OS?', type: 'technical', difficulty: fallbackDifficulty },
-      { id: '4', text: 'Write a function to find the first non-repeating character in a string.', type: 'coding', difficulty: fallbackDifficulty },
-      { id: '5', text: 'Implement a function to reverse a linked list.', type: 'coding', difficulty: fallbackDifficulty }
+      { id: '4', text: 'Write a function to find the first non-repeating character in a string.', type: 'coding', difficulty: fallbackDifficulty, testCases: [
+        { input: '"aabcbd"', expectedOutput: '"c"' },
+        { input: '"abcabc"', expectedOutput: 'null or None' },
+        { input: '"a"', expectedOutput: '"a"' }
+      ]},
+      { id: '5', text: 'Implement a function to reverse a linked list.', type: 'coding', difficulty: fallbackDifficulty, testCases: [
+        { input: '1 -> 2 -> 3 -> 4 -> 5', expectedOutput: '5 -> 4 -> 3 -> 2 -> 1' },
+        { input: '1', expectedOutput: '1' },
+        { input: 'empty list', expectedOutput: 'empty list' }
+      ]}
     ];
 
     res.json({

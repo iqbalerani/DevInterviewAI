@@ -15,7 +15,9 @@ const questionSchema = new mongoose.Schema({
   testCases: [{
     input: String,
     expectedOutput: String
-  }]
+  }],
+  submittedCode: { type: String, default: '' },
+  codeLanguage: { type: String, default: 'python' }
 });
 
 const sessionSchema = new mongoose.Schema({

@@ -162,6 +162,15 @@ export class InterviewOrchestrator {
   }
 
   /**
+   * Safely send data to WebSocket (no-op if closed)
+   */
+  _safeSend(data) {
+    if (this.ws && this.ws.readyState === 1) {
+      this.ws.send(JSON.stringify(data));
+    }
+  }
+
+  /**
    * Handle state transitions and notify client
    */
   handleStateTransition(state) {
@@ -179,14 +188,14 @@ export class InterviewOrchestrator {
     });
 
     // Send state update to client
-    this.ws.send(JSON.stringify({
+    this._safeSend({
       type: 'state_changed',
       state: currentState,
       context: {
         currentQuestionIndex: context.currentQuestionIndex,
         hasUserResponse: context.hasUserResponse
       }
-    }));
+    });
   }
 
   /**
@@ -286,14 +295,7 @@ export class InterviewOrchestrator {
         questionId: nextQuestion.id
       });
 
-      // Notify client
-      this.ws.send(JSON.stringify({
-        type: 'question_changed',
-        questionIndex: nextQuestionIndex,
-        question: nextQuestion
-      }));
-
-      return { complete: false, nextQuestion };
+      return { success: true, complete: false, nextQuestion, questionIndex: nextQuestionIndex };
 
     } catch (error) {
       console.error('Transition error:', error);
