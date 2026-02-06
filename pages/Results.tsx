@@ -4,24 +4,33 @@ import { useParams, Link } from 'react-router-dom';
 import { Award, Share2, Download, CheckCircle2, AlertCircle, RefreshCcw, Home } from 'lucide-react';
 import { Radar, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer } from 'recharts';
 import { useAppStore } from '../store';
-import { geminiService } from '../services/geminiService';
+import { interviewService } from '../services/interviewService';
 
 const Results: React.FC = () => {
   const { sessionId } = useParams();
-  const { session, resetSession } = useAppStore();
+  const { session: zustandSession, resetSession } = useAppStore();
   const [evaluation, setEvaluation] = useState<any>(null);
+  const [session, setSession] = useState<any>(zustandSession);
   const [chartUrl, setChartUrl] = useState<string>('');
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const processResults = async () => {
-      if (!session) return;
-      
+      if (!sessionId) return;
+
       try {
-        const result = await geminiService.evaluateInterview(session);
+        // Fetch session from API as fallback if Zustand state is empty (e.g. page refresh)
+        if (!session) {
+          try {
+            const fetchedSession = await interviewService.getSession(sessionId);
+            setSession(fetchedSession);
+          } catch {
+            // Session fetch is non-critical; evaluation can still load
+          }
+        }
+
+        const result = await interviewService.evaluateSession(sessionId);
         setEvaluation(result);
-        const url = await geminiService.generateSkillChart(result);
-        setChartUrl(url);
       } catch (e) {
         console.error("Evaluation failed", e);
       } finally {
@@ -30,7 +39,7 @@ const Results: React.FC = () => {
     };
 
     processResults();
-  }, [session]);
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (isLoading) {
     return (
@@ -44,14 +53,37 @@ const Results: React.FC = () => {
     );
   }
 
+  // Check if evaluation data exists
+  if (!evaluation || !evaluation.scores?.technical) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center space-y-6 p-8">
+        <AlertCircle className="w-20 h-20 text-yellow-500" />
+        <div className="text-center max-w-2xl">
+          <h2 className="text-3xl font-bold mb-4">No Evaluation Data Available</h2>
+          <p className="text-slate-400 text-lg mb-8">
+            The interview session did not generate sufficient data for evaluation.
+            This may occur if the interview was ended early or no responses were recorded.
+          </p>
+          <Link
+            to="/"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 rounded-xl font-bold hover:bg-blue-700 transition-all"
+          >
+            <Home className="w-5 h-5" />
+            Start New Interview
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   const radarData = [
-    { subject: 'Technical', A: evaluation.technical, fullMark: 100 },
-    { subject: 'Coding', A: evaluation.coding, fullMark: 100 },
-    { subject: 'Communication', A: evaluation.communication, fullMark: 100 },
-    { subject: 'Logic', A: evaluation.problemSolving, fullMark: 100 },
+    { subject: 'Technical', A: evaluation.scores.technical, fullMark: 100 },
+    { subject: 'Coding', A: evaluation.scores.coding, fullMark: 100 },
+    { subject: 'Communication', A: evaluation.scores.communication, fullMark: 100 },
+    { subject: 'Logic', A: evaluation.scores.problemSolving, fullMark: 100 },
   ];
 
-  const overallScore = Math.round((evaluation.technical + evaluation.coding + evaluation.communication + evaluation.problemSolving) / 4);
+  const overallScore = Math.round((evaluation.scores.technical + evaluation.scores.coding + evaluation.scores.communication + evaluation.scores.problemSolving) / 4);
 
   return (
     <div className="max-w-6xl mx-auto p-8 pb-20 space-y-12 animate-in fade-in duration-1000">
@@ -98,7 +130,7 @@ const Results: React.FC = () => {
               </div>
               <div>
                 <h4 className="text-2xl font-bold">{overallScore >= 80 ? 'Strong Hire' : 'Developing'}</h4>
-                <p className="text-slate-400">Based on industry standards for {session?.questions[0].difficulty} level.</p>
+                <p className="text-slate-400">Based on industry standards for {session?.questions?.[0]?.difficulty || 'mid'} level.</p>
               </div>
             </div>
 
@@ -116,35 +148,39 @@ const Results: React.FC = () => {
 
           {/* Feedback Sections */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="bg-green-500/5 border border-green-500/20 rounded-3xl p-8">
-              <h4 className="flex items-center gap-2 text-green-500 font-bold mb-6">
-                <CheckCircle2 className="w-5 h-5" />
-                Key Strengths
-              </h4>
-              <ul className="space-y-4">
-                {evaluation.strengths.map((s: string, i: number) => (
-                  <li key={i} className="flex gap-3 text-slate-300">
-                    <div className="w-1.5 h-1.5 rounded-full bg-green-500 mt-2 shrink-0" />
-                    {s}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            {evaluation.strengths && evaluation.strengths.length > 0 && (
+              <div className="bg-green-500/5 border border-green-500/20 rounded-3xl p-8">
+                <h4 className="flex items-center gap-2 text-green-500 font-bold mb-6">
+                  <CheckCircle2 className="w-5 h-5" />
+                  Key Strengths
+                </h4>
+                <ul className="space-y-4">
+                  {evaluation.strengths.map((s: string, i: number) => (
+                    <li key={i} className="flex gap-3 text-slate-300">
+                      <div className="w-1.5 h-1.5 rounded-full bg-green-500 mt-2 shrink-0" />
+                      {s}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
-            <div className="bg-orange-500/5 border border-orange-500/20 rounded-3xl p-8">
-              <h4 className="flex items-center gap-2 text-orange-500 font-bold mb-6">
-                <AlertCircle className="w-5 h-5" />
-                Areas for Improvement
-              </h4>
-              <ul className="space-y-4">
-                {evaluation.weaknesses.map((w: string, i: number) => (
-                  <li key={i} className="flex gap-3 text-slate-300">
-                    <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-2 shrink-0" />
-                    {w}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            {evaluation.weaknesses && evaluation.weaknesses.length > 0 && (
+              <div className="bg-orange-500/5 border border-orange-500/20 rounded-3xl p-8">
+                <h4 className="flex items-center gap-2 text-orange-500 font-bold mb-6">
+                  <AlertCircle className="w-5 h-5" />
+                  Areas for Improvement
+                </h4>
+                <ul className="space-y-4">
+                  {evaluation.weaknesses.map((w: string, i: number) => (
+                    <li key={i} className="flex gap-3 text-slate-300">
+                      <div className="w-1.5 h-1.5 rounded-full bg-orange-500 mt-2 shrink-0" />
+                      {w}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 

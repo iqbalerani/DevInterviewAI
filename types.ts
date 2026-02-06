@@ -20,6 +20,7 @@ export interface TranscriptEntry {
   speaker: 'user' | 'ai';
   text: string;
   timestamp: number;
+  isPartial?: boolean;
 }
 
 export interface InterviewSession {

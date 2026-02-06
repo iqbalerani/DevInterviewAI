@@ -42,7 +42,8 @@ export const useLiveAPI = (systemInstruction: string) => {
   const outputAudioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null);
   
   const { addTranscript, setAISpeaking } = useAppStore();
   const currentTranscriptionRef = useRef({ user: '', ai: '' });
@@ -53,9 +54,13 @@ export const useLiveAPI = (systemInstruction: string) => {
       sessionRef.current.close();
       sessionRef.current = null;
     }
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
+    if (workletNodeRef.current) {
+      workletNodeRef.current.disconnect();
+      workletNodeRef.current = null;
+    }
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+      sourceNodeRef.current = null;
     }
     if (audioContextRef.current) {
       audioContextRef.current.close();
@@ -84,6 +89,9 @@ export const useLiveAPI = (systemInstruction: string) => {
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: SAMPLE_RATE });
       outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: OUTPUT_SAMPLE_RATE });
 
+      // Load AudioWorklet module
+      await audioContextRef.current.audioWorklet.addModule('/audio-processor.js');
+
       // Explicitly resume to bypass browser restrictions immediately
       await audioContextRef.current.resume();
       await outputAudioContextRef.current.resume();
@@ -100,32 +108,31 @@ export const useLiveAPI = (systemInstruction: string) => {
           outputAudioTranscription: {},
         },
         callbacks: {
-          onopen: () => {
+          onopen: async () => {
             console.log("Live API: Connected");
             setStatus('connected');
-            
+
             const source = audioContextRef.current!.createMediaStreamSource(stream);
-            const processor = audioContextRef.current!.createScriptProcessor(4096, 1, 1);
-            processorRef.current = processor;
-            
-            processor.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const int16 = new Int16Array(inputData.length);
-              for (let i = 0; i < inputData.length; i++) {
-                int16[i] = inputData[i] * 32768;
+            const workletNode = new AudioWorkletNode(audioContextRef.current!, 'audio-input-processor');
+
+            sourceNodeRef.current = source;
+            workletNodeRef.current = workletNode;
+
+            // Handle audio data from worklet
+            workletNode.port.onmessage = (event) => {
+              if (event.data.type === 'audio-data') {
+                sessionPromise.then(s => {
+                  if (s) {
+                    s.sendRealtimeInput({
+                      media: { data: encode(new Uint8Array(event.data.data)), mimeType: 'audio/pcm;rate=16000' }
+                    });
+                  }
+                });
               }
-              
-              sessionPromise.then(s => {
-                if (s) {
-                  s.sendRealtimeInput({
-                    media: { data: encode(new Uint8Array(int16.buffer)), mimeType: 'audio/pcm;rate=16000' }
-                  });
-                }
-              });
             };
-            
-            source.connect(processor);
-            processor.connect(audioContextRef.current!.destination);
+
+            source.connect(workletNode);
+            workletNode.connect(audioContextRef.current!.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
             if (message.serverContent?.outputTranscription) {
@@ -192,11 +199,13 @@ export const useLiveAPI = (systemInstruction: string) => {
       console.error("Live API Setup Error:", err);
       setStatus('error');
     }
-  }, [systemInstruction, addTranscript, setAISpeaking, status]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   useEffect(() => {
     return () => { disconnect(); };
-  }, [disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return { status, connect, disconnect };
 };

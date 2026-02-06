@@ -3,7 +3,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, Briefcase, Zap, CheckCircle2, Upload, BarChart3, ChevronRight, Sparkles, Cpu, ShieldCheck, Globe, AlertCircle } from 'lucide-react';
 import { useAppStore } from '../store';
-import { geminiService } from '../services/geminiService';
+import { interviewService } from '../services/interviewService';
 import { InterviewPhase, InterviewSession } from '../types';
 
 const DUMMY_ROLES = [
@@ -78,37 +78,30 @@ const InterviewSetup: React.FC = () => {
 
   const handleStart = async () => {
     if (!resume || !jd) return;
-    
+
     setError(null);
     setIsParsing(true);
     setLoadingStep(0);
-    
+
     try {
-      const plan = await geminiService.generateInterviewPlan(resume, jd);
-      
+      // Generate interview plan via backend API
+      const plan = await interviewService.generateInterviewPlan(resume, jd);
+
       if (!plan || plan.length === 0) {
         throw new Error("Could not generate a valid interview plan.");
       }
 
-      const newSession: InterviewSession = {
-        id: Math.random().toString(36).substr(2, 9),
-        status: 'active',
-        phase: InterviewPhase.INTRO,
-        startTime: Date.now(),
-        resumeData: resume,
-        jobDescription: jd,
-        questions: plan,
-        currentQuestionIndex: 0,
-        transcripts: [],
-      };
-      
+      // Create session in backend database
+      const newSession = await interviewService.createSession(resume, jd, plan);
+
+      // Store session in Zustand for frontend state
       setSession(newSession);
-      
+
       // UX delay for the final step of loading animation
       setTimeout(() => {
         navigate(`/interview/room/${newSession.id}`);
       }, 800);
-      
+
     } catch (e) {
       console.error("Start Session Error:", e);
       setError("AI was unable to generate your session. Please check your inputs and try again.");
@@ -121,7 +114,7 @@ const InterviewSetup: React.FC = () => {
     setIsRanking(true);
     setError(null);
     try {
-      const result = await geminiService.calculateMatchScore(resume, jd);
+      const result = await interviewService.calculateMatchScore(resume, jd);
       setRankResult(result);
     } catch (e) {
       console.error(e);

@@ -1,68 +1,69 @@
 
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Mic, MicOff, Video, VideoOff, Send, HelpCircle, Power, ChevronRight, Play, Clock, AlertTriangle, Loader2 } from 'lucide-react';
+import { Mic, MicOff, HelpCircle, Power, ChevronRight, Play, Clock, AlertTriangle, Loader2, CheckCircle } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 import { useAppStore } from '../store';
-import { useLiveAPI } from '../hooks/useLiveAPI';
+import { useInterviewWebSocket } from '../hooks/useInterviewWebSocket';
+import { interviewService } from '../services/interviewService';
 import { InterviewPhase } from '../types';
 
-const SESSION_LIMIT_SECONDS = 120; // 2 minutes max session duration
+const SESSION_LIMIT_SECONDS = 900; // 15 minutes max session duration
 
 const InterviewRoom: React.FC = () => {
   const { sessionId } = useParams();
   const navigate = useNavigate();
-  const { session, isAISpeaking, setPhase, updateSession, incrementHints, hintsUsed, addTranscript } = useAppStore();
-  
+  const { session, isAISpeaking, setPhase, updateSession, incrementHints, hintsUsed, addTranscript, setSession } = useAppStore();
+
   const [isMicOn, setIsMicOn] = useState(true);
-  const [isVideoOn, setIsVideoOn] = useState(true);
   const [code, setCode] = useState('// Your code here...');
   const [output, setOutput] = useState('');
   const [phaseSeconds, setPhaseSeconds] = useState(0);
   const [totalSeconds, setTotalSeconds] = useState(0);
   const [hasStartedRoom, setHasStartedRoom] = useState(false);
-  
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const timerRef = useRef<number | null>(null);
-  
-  const currentQuestion = session?.questions[session.currentQuestionIndex];
-  
-  const systemInstruction = useMemo(() => `
-    You are a professional technical interviewer at a top-tier tech company. 
-    Conduct a technical interview based on these questions: ${JSON.stringify(session?.questions)}.
-    Currently in phase: ${session?.phase}
-    The current question is: "${currentQuestion?.text}"
-    
-    GUIDELINES:
-    1. Stay strictly in character.
-    2. Be concise but insightful.
-    3. Listen to the candidate's response before proceeding.
-    4. If the session is near its 2-minute limit, gracefully wrap up the current point.
-  `, [session?.questions, session?.phase, currentQuestion?.text]);
+  const [isLoadingSession, setIsLoadingSession] = useState(false);
 
-  const { status, connect, disconnect } = useLiveAPI(systemInstruction);
+  const timerRef = useRef<number | null>(null);
+
+  const currentQuestion = session?.questions[session.currentQuestionIndex];
+
+  const { status, connect, disconnect, sendMessage } = useInterviewWebSocket(sessionId || '');
   const isConnected = status === 'connected';
 
-  // Initial setup: Camera and Session Check
+  // Initial setup: Session Check and Load
   useEffect(() => {
-    if (!session) {
-      navigate('/interview/setup');
-      return;
-    }
-    
-    if (navigator.mediaDevices.getUserMedia) {
-      navigator.mediaDevices.getUserMedia({ video: true })
-        .then(stream => {
-          if (videoRef.current) videoRef.current.srcObject = stream;
-        })
-        .catch(err => console.error("Camera access denied:", err));
-    }
+    const loadSession = async () => {
+      if (!sessionId) {
+        navigate('/interview/setup');
+        return;
+      }
+
+      // If session exists in state and matches URL, we're good
+      if (session && session.id === sessionId) {
+        return;
+      }
+
+      // Try to load session from backend
+      setIsLoadingSession(true);
+      try {
+        const fetchedSession = await interviewService.getSession(sessionId);
+        setSession(fetchedSession);
+      } catch (error) {
+        console.error('Failed to load session:', error);
+        navigate('/interview/setup');
+      } finally {
+        setIsLoadingSession(false);
+      }
+    };
+
+    loadSession();
 
     return () => {
       disconnect();
       if (timerRef.current) window.clearInterval(timerRef.current);
     };
-  }, [session, navigate, disconnect]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, navigate]); // sessionId and navigate dependencies
 
   // Master Timer Logic: Starts only when Audio Room is joined
   useEffect(() => {
@@ -105,21 +106,23 @@ const InterviewRoom: React.FC = () => {
     navigate(`/interview/results/${sessionId}`);
   };
 
-  const handleNextPhase = () => {
+  const handleNextPhase = async () => {
     if (!session) return;
-    setPhaseSeconds(0);
-    const nextIdx = session.currentQuestionIndex + 1;
-    if (nextIdx >= session.questions.length) {
-      handleCompleteInterview();
-    } else {
-      updateSession({ currentQuestionIndex: nextIdx });
-      const nextQType = session.questions[nextIdx].type;
-      
-      let nextPhase = InterviewPhase.TECHNICAL;
-      if (nextQType === 'coding') nextPhase = InterviewPhase.CODING;
-      else if (nextQType === 'behavioral') nextPhase = InterviewPhase.BEHAVIORAL;
-      
-      setPhase(nextPhase);
+
+    try {
+      // Send next_question event to backend orchestrator
+      // This will:
+      // 1. Trigger background evaluation for current question
+      // 2. Update backend session state
+      // 3. Send context update to Live API (NO RECONNECT)
+      // 4. Notify frontend of question change
+      sendMessage({ type: 'next_question' });
+
+      // Reset phase timer
+      setPhaseSeconds(0);
+
+    } catch (error) {
+      console.error('Next phase error:', error);
     }
   };
 
@@ -129,9 +132,19 @@ const InterviewRoom: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  if (!session || !currentQuestion) return null;
-
   const isNearingLimit = totalSeconds > SESSION_LIMIT_SECONDS - 15;
+
+  // Loading state while fetching session
+  if (isLoadingSession || !session || !currentQuestion) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-slate-950">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-12 h-12 text-blue-500 animate-spin mx-auto" />
+          <p className="text-slate-400 text-sm">Loading interview session...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
@@ -175,20 +188,39 @@ const InterviewRoom: React.FC = () => {
 
       {/* Main Content Area */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Panel: Video Feed & Conversation */}
+        {/* Left Panel: Audio Visualizer & Conversation */}
         <div className="w-1/3 border-r border-slate-800 flex flex-col p-6 space-y-6 bg-slate-900/20">
-          <div className="relative aspect-video bg-slate-900 rounded-3xl overflow-hidden border-2 border-slate-800 shadow-2xl group">
-            <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
-            
-            <div className="absolute bottom-4 left-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <button onClick={() => setIsMicOn(!isMicOn)} className={`p-2 rounded-full backdrop-blur-md ${isMicOn ? 'bg-slate-700/80' : 'bg-red-500'}`}>
-                {isMicOn ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-              </button>
-              <button onClick={() => setIsVideoOn(!isVideoOn)} className={`p-2 rounded-full backdrop-blur-md ${isVideoOn ? 'bg-slate-700/80' : 'bg-red-500'}`}>
-                {isVideoOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+          {/* Audio Visualizer */}
+          <div className="relative aspect-video bg-slate-900 rounded-3xl overflow-hidden border-2 border-slate-800 shadow-2xl flex items-center justify-center">
+            {/* Audio Waveform Visualization */}
+            <div className="flex items-center gap-2 h-32">
+              {[...Array(12)].map((_, i) => (
+                <div
+                  key={i}
+                  className={`w-2 rounded-full transition-all duration-300 ${
+                    isConnected && isAISpeaking
+                      ? 'bg-blue-500 animate-pulse'
+                      : isConnected
+                      ? 'bg-green-500/50'
+                      : 'bg-slate-700'
+                  }`}
+                  style={{
+                    height: isConnected && isAISpeaking
+                      ? `${30 + Math.random() * 70}%`
+                      : '20%',
+                    animationDelay: `${i * 0.1}s`
+                  }}
+                />
+              ))}
+            </div>
+
+            {/* Microphone Status Button */}
+            <div className="absolute bottom-4 left-4">
+              <button onClick={() => setIsMicOn(!isMicOn)} className={`p-3 rounded-full backdrop-blur-md ${isMicOn ? 'bg-slate-700/80' : 'bg-red-500'}`}>
+                {isMicOn ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
               </button>
             </div>
-            
+
             {isNearingLimit && (
               <div className="absolute top-4 right-4 bg-red-600 text-white px-3 py-1 rounded-full flex items-center gap-2 text-[10px] font-black animate-pulse shadow-xl">
                 <AlertTriangle className="w-3 h-3" />
@@ -208,7 +240,7 @@ const InterviewRoom: React.FC = () => {
                   {status === 'connecting' ? 'Calibrating AI response engine and requesting microphone...' : 'The session timers will begin once you connect to the AI interviewer.'}
                 </p>
                 {status !== 'connecting' && (
-                  <button 
+                  <button
                     onClick={handleJoinAudio}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-12 py-4 rounded-2xl font-black transition-all transform hover:scale-105 shadow-xl shadow-blue-600/30"
                   >
@@ -226,7 +258,7 @@ const InterviewRoom: React.FC = () => {
                {isConnected && <div className="flex items-center gap-1.5"><span className="text-[10px] text-green-500 font-bold uppercase">Live</span><div className="w-2 h-2 rounded-full bg-green-500 animate-ping" /></div>}
             </div>
             <div className="flex-1 overflow-y-auto pr-2 space-y-4 scrollbar-hide">
-              {session.transcripts.length === 0 ? (
+              {!session?.transcripts || session.transcripts.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center space-y-2 opacity-30">
                   <Play className="w-8 h-8 text-slate-600" />
                   <p className="text-xs italic">Conversation will appear here...</p>
@@ -238,11 +270,14 @@ const InterviewRoom: React.FC = () => {
                       {t.speaker === 'ai' ? 'Interviewer' : 'Candidate'}
                     </span>
                     <div className={`max-w-[90%] px-4 py-2.5 rounded-2xl text-xs leading-relaxed ${
-                      t.speaker === 'ai' 
-                      ? 'bg-blue-600/10 text-blue-100 rounded-tl-none border border-blue-500/10' 
+                      t.speaker === 'ai'
+                      ? 'bg-blue-600/10 text-blue-100 rounded-tl-none border border-blue-500/10'
                       : 'bg-slate-800 text-slate-200 rounded-tr-none border border-slate-700'
-                    }`}>
+                    } ${t.isPartial ? 'opacity-70 italic' : ''}`}>
                       {t.text}
+                      {t.isPartial && (
+                        <span className="inline-block w-1.5 h-3 bg-current ml-1 animate-pulse rounded-sm" />
+                      )}
                     </div>
                   </div>
                 ))
@@ -284,13 +319,25 @@ const InterviewRoom: React.FC = () => {
               <div className="h-1/2 border-t border-slate-800 flex flex-col p-8 bg-slate-950/50">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Console Output</h3>
-                  <button 
-                    onClick={handleRunCode}
-                    className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg shadow-green-600/20 active:scale-95 flex items-center gap-2"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-white" />
-                    RUN TESTS
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleRunCode}
+                      className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg shadow-green-600/20 active:scale-95 flex items-center gap-2"
+                    >
+                      <Play className="w-3.5 h-3.5 fill-white" />
+                      RUN TESTS
+                    </button>
+                    <button
+                      onClick={() => {
+                        sendMessage({ type: 'disconnect' });
+                        handleCompleteInterview();
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg shadow-blue-600/20 active:scale-95 flex items-center gap-2"
+                    >
+                      <CheckCircle className="w-3.5 h-3.5" />
+                      FINISH INTERVIEW
+                    </button>
+                  </div>
                 </div>
                 <pre className="flex-1 bg-slate-900/80 p-6 rounded-2xl border border-slate-800 font-mono text-xs text-slate-400 overflow-auto scrollbar-hide">
                   {output || '> Awaiting execution...'}
@@ -364,13 +411,26 @@ const InterviewRoom: React.FC = () => {
           </div>
         </div>
 
-        <button 
-          onClick={handleNextPhase}
-          className="flex items-center gap-3 bg-blue-600 hover:bg-blue-700 text-white px-12 py-4 rounded-2xl font-black text-sm transition-all shadow-xl shadow-blue-600/30 active:scale-95 group"
-        >
-          {session.currentQuestionIndex === session.questions.length - 1 ? 'FINISH & VIEW RESULTS' : 'NEXT INTERVIEW PHASE'}
-          <ChevronRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
-        </button>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2 text-slate-400 text-sm">
+            <div className={`w-2 h-2 rounded-full ${session?.phase === InterviewPhase.CODING ? 'bg-blue-500' : 'bg-green-500 animate-pulse'}`}></div>
+            <span>
+              {session?.phase === InterviewPhase.CODING
+                ? "Click 'Finish Interview' when ready to complete"
+                : "Auto-advancing after your response..."}
+            </span>
+          </div>
+          {session?.phase !== InterviewPhase.CODING && (
+            <button
+              onClick={handleNextPhase}
+              className="flex items-center gap-3 bg-slate-700/50 hover:bg-slate-600/50 text-slate-300 px-8 py-3 rounded-xl font-bold text-xs transition-all border border-slate-600"
+              title="Manually skip to next question (auto-advance is enabled)"
+            >
+              Skip to Next
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
