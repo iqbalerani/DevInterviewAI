@@ -54,8 +54,11 @@ export const interviewService = {
   /**
    * Evaluate interview session
    */
-  async evaluateSession(sessionId: string) {
-    const response = await fetch(`${API_BASE_URL}/api/evaluations/${sessionId}/evaluate`, {
+  async evaluateSession(sessionId: string, force?: boolean) {
+    const url = force
+      ? `${API_BASE_URL}/api/evaluations/${sessionId}/evaluate?force=true`
+      : `${API_BASE_URL}/api/evaluations/${sessionId}/evaluate`;
+    const response = await fetch(url, {
       method: 'POST'
     });
 
@@ -92,16 +95,26 @@ export const interviewService = {
   /**
    * Generate interview plan from resume and JD
    */
-  async generateInterviewPlan(resume: string, jd: string) {
+  async generateInterviewPlan(resume: string, jd: string, difficulty: string) {
     const response = await fetch(`${API_BASE_URL}/api/resume/generate-plan`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ resume, jd })
+      body: JSON.stringify({ resume, jd, difficulty })
     });
 
     const data = await response.json();
     if (!data.success) throw new Error(data.error);
     return data.questions;
+  },
+
+  /**
+   * Get aggregated dashboard stats
+   */
+  async getDashboardStats() {
+    const response = await fetch(`${API_BASE_URL}/api/dashboard/stats`);
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error);
+    return data.data;
   },
 
   /**

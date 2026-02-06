@@ -85,7 +85,7 @@ const InterviewSetup: React.FC = () => {
 
     try {
       // Generate interview plan via backend API
-      const plan = await interviewService.generateInterviewPlan(resume, jd);
+      const plan = await interviewService.generateInterviewPlan(resume, jd, level);
 
       if (!plan || plan.length === 0) {
         throw new Error("Could not generate a valid interview plan.");

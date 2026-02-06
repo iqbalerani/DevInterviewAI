@@ -9,6 +9,7 @@ import sessionsRouter from './routes/sessions.js';
 import transcriptsRouter from './routes/transcripts.js';
 import evaluationsRouter from './routes/evaluations.js';
 import resumeRouter from './routes/resume.js';
+import dashboardRouter from './routes/dashboard.js';
 // Initialize evaluation queue worker
 import './queues/evaluationQueue.js';
 
@@ -37,6 +38,7 @@ app.use('/api/sessions', sessionsRouter);
 app.use('/api/transcripts', transcriptsRouter);
 app.use('/api/evaluations', evaluationsRouter);
 app.use('/api/resume', resumeRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
