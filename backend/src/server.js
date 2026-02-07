@@ -1,6 +1,8 @@
+// Load environment variables FIRST (before any other imports that need env vars)
+import 'dotenv/config';
+
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import compression from 'compression';
 import { createServer } from 'http';
 import { connectDatabase } from './db/connection.js';
@@ -16,16 +18,27 @@ import userResumeRouter from './routes/userResume.js';
 // Initialize evaluation queue worker
 import './queues/evaluationQueue.js';
 
-// Load environment variables
-dotenv.config();
-
 const app = express();
 const PORT = process.env.PORT || 3002;
 
 // Middleware
 app.use(compression());
+
+const allowedOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL_DEPLOYED,
+  'http://localhost:3001'
+].filter(Boolean);
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, etc.)
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(null, false);
+    }
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
