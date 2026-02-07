@@ -95,8 +95,8 @@ router.post('/generate-plan', async (req, res) => {
       Create a tailored technical interview plan for this candidate.
       Generate exactly 5 questions:
       - 1 Behavioral (soft skills/experience)
-      - 2 Technical Conceptual (architecture, language specifics, systems)
-      - 2 Coding Challenges (algorithms or problem-solving)
+      - 3 Technical Conceptual (architecture, language specifics, systems)
+      - 1 Coding Challenge (algorithms or problem-solving)
 
       All questions MUST be at the "${selectedDifficulty}" seniority level.
       - junior: fundamental concepts, basic syntax, straightforward problems
@@ -146,8 +146,8 @@ router.post('/generate-plan', async (req, res) => {
     const questions = extractJson(response.text);
 
     // Fallback if generation fails
-    if (!questions || questions.length === 0) {
-      throw new Error('Generated plan is empty');
+    if (!questions || questions.length < 5) {
+      throw new Error(`Generated plan has ${questions?.length ?? 0} questions, expected 5`);
     }
 
     res.json({ success: true, questions });
@@ -161,15 +161,11 @@ router.post('/generate-plan', async (req, res) => {
       { id: '1', text: 'Tell me about a difficult technical challenge you solved recently.', type: 'behavioral', difficulty: fallbackDifficulty },
       { id: '2', text: 'Explain the concept of Big O notation and why it matters.', type: 'technical', difficulty: fallbackDifficulty },
       { id: '3', text: 'What is the difference between a process and a thread in a modern OS?', type: 'technical', difficulty: fallbackDifficulty },
-      { id: '4', text: 'Write a function to find the first non-repeating character in a string.', type: 'coding', difficulty: fallbackDifficulty, testCases: [
+      { id: '4', text: 'Describe how you would design a caching layer for a high-traffic web application.', type: 'technical', difficulty: fallbackDifficulty },
+      { id: '5', text: 'Write a function to find the first non-repeating character in a string.', type: 'coding', difficulty: fallbackDifficulty, testCases: [
         { input: '"aabcbd"', expectedOutput: '"c"' },
         { input: '"abcabc"', expectedOutput: 'null or None' },
         { input: '"a"', expectedOutput: '"a"' }
-      ]},
-      { id: '5', text: 'Implement a function to reverse a linked list.', type: 'coding', difficulty: fallbackDifficulty, testCases: [
-        { input: '1 -> 2 -> 3 -> 4 -> 5', expectedOutput: '5 -> 4 -> 3 -> 2 -> 1' },
-        { input: '1', expectedOutput: '1' },
-        { input: 'empty list', expectedOutput: 'empty list' }
       ]}
     ];
 

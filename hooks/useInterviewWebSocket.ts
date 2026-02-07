@@ -3,6 +3,7 @@ import { useAppStore } from '../store';
 import { useVoiceActivityDetection } from './useVoiceActivityDetection';
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3002/ws/interview';
+const TOKEN_KEY = 'devproof-auth-token';
 
 const SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
@@ -166,8 +167,10 @@ export const useInterviewWebSocket = (sessionId: string) => {
       source.connect(workletNode);
       workletNode.connect(audioContextRef.current.destination);
 
-      // Create WebSocket connection
-      const ws = new WebSocket(WS_URL);
+      // Create WebSocket connection with auth token
+      const token = localStorage.getItem(TOKEN_KEY);
+      const wsUrl = token ? `${WS_URL}?token=${encodeURIComponent(token)}` : WS_URL;
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {

@@ -1,12 +1,15 @@
 
 import React, { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Play, TrendingUp, Clock, Target, Plus, RefreshCcw, ArrowRight } from 'lucide-react';
+import { Play, TrendingUp, Clock, Target, Plus, RefreshCcw, ArrowRight, Layers, CircleHelp, CheckCircle2 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
 import { interviewService } from '../services/interviewService';
-import type { DashboardStats, DashboardSession } from '../types';
+import { flashcardDecks } from '../data/flashcardDecks';
+import { quizDecks } from '../data/quizDecks';
+import { useAuthStore } from '../store/authStore';
+import type { DashboardStats, DashboardSession, FlashcardProgress, QuizProgress } from '../types';
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -46,6 +49,8 @@ function formatDuration(startTime?: string, endTime?: string): string {
 type TimeRange = '7d' | '30d' | 'all';
 
 const Dashboard: React.FC = () => {
+  const user = useAuthStore((s) => s.user);
+  const userId = user?.id ?? 'anonymous';
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -68,6 +73,96 @@ const Dashboard: React.FC = () => {
     fetchStats();
   }, []);
 
+  // Study progress stats (localStorage-based, always available)
+  const studyStats = useMemo(() => {
+    let fcProgress: Record<string, FlashcardProgress> = {};
+    let qzProgress: Record<string, QuizProgress> = {};
+    try {
+      const fcRaw = localStorage.getItem(`devproof-flashcard-progress-${userId}`);
+      if (fcRaw) fcProgress = JSON.parse(fcRaw);
+    } catch {}
+    try {
+      const qzRaw = localStorage.getItem(`devproof-quiz-progress-${userId}`);
+      if (qzRaw) qzProgress = JSON.parse(qzRaw);
+    } catch {}
+
+    const totalCards = flashcardDecks.reduce((s, d) => s + d.cards.length, 0);
+    const cardsMastered = Object.values(fcProgress).reduce(
+      (s, p) => s + Object.values(p.cardStatuses).filter((v) => v === 'mastered').length, 0
+    );
+    const decksStudied = Object.keys(fcProgress).length;
+    const totalDecks = flashcardDecks.length;
+    const masteryRate = totalCards > 0 ? Math.round((cardsMastered / totalCards) * 100) : 0;
+
+    const totalQuestions = quizDecks.reduce((s, d) => s + d.questions.length, 0);
+    const correctAnswers = Object.values(qzProgress).reduce(
+      (s, p) => s + Object.values(p.answers).filter((a) => a.status === 'correct').length, 0
+    );
+    const quizzesCompleted = Object.values(qzProgress).filter((p) => p.completedAt).length;
+    const totalQuizDecks = quizDecks.length;
+    const totalAnswered = Object.values(qzProgress).reduce(
+      (s, p) => s + Object.values(p.answers).filter((a) => a.status !== 'unanswered').length, 0
+    );
+    const accuracyRate = totalAnswered > 0 ? Math.round((correctAnswers / totalAnswered) * 100) : 0;
+
+    return {
+      cardsMastered, totalCards, decksStudied, totalDecks, masteryRate,
+      correctAnswers, totalQuestions, quizzesCompleted, totalQuizDecks, accuracyRate,
+    };
+  }, [userId]);
+
+  const studyProgressSection = (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-8 pb-0">
+      {/* Flashcard Stats */}
+      <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+            <Layers className="w-5 h-5 text-blue-500" />
+          </div>
+          <h3 className="text-lg font-bold text-slate-100">Flashcard Stats</h3>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <p className="text-2xl font-bold text-slate-100">{studyStats.cardsMastered}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalCards}</span></p>
+            <p className="text-xs text-slate-500 mt-1">Cards Mastered</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-slate-100">{studyStats.decksStudied}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalDecks}</span></p>
+            <p className="text-xs text-slate-500 mt-1">Decks Studied</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-green-400">{studyStats.masteryRate}%</p>
+            <p className="text-xs text-slate-500 mt-1">Mastery Rate</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Quiz Stats */}
+      <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
+            <CircleHelp className="w-5 h-5 text-purple-500" />
+          </div>
+          <h3 className="text-lg font-bold text-slate-100">Quiz Stats</h3>
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <p className="text-2xl font-bold text-slate-100">{studyStats.correctAnswers}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalQuestions}</span></p>
+            <p className="text-xs text-slate-500 mt-1">Correct Answers</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-slate-100">{studyStats.quizzesCompleted}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalQuizDecks}</span></p>
+            <p className="text-xs text-slate-500 mt-1">Quizzes Completed</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-green-400">{studyStats.accuracyRate}%</p>
+            <p className="text-xs text-slate-500 mt-1">Accuracy Rate</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
   const chartData = useMemo(() => {
     if (!stats) return [];
     let points = stats.skillProgression;
@@ -84,7 +179,9 @@ const Dashboard: React.FC = () => {
   // --- Loading skeleton ---
   if (loading) {
     return (
-      <div className="space-y-8 p-8 animate-in fade-in duration-500">
+      <div className="space-y-8 animate-in fade-in duration-500">
+        {studyProgressSection}
+        <div className="space-y-8 p-8 pt-0">
         <div className="flex items-center justify-between">
           <div>
             <div className="h-8 w-64 bg-slate-700/50 rounded-lg animate-pulse" />
@@ -109,6 +206,7 @@ const Dashboard: React.FC = () => {
             <div className="h-64 bg-slate-700/30 rounded animate-pulse" />
           </div>
         </div>
+        </div>
       </div>
     );
   }
@@ -116,11 +214,14 @@ const Dashboard: React.FC = () => {
   // --- Error state ---
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] p-8">
-        <div className="text-red-400 text-lg mb-4">{error}</div>
-        <button onClick={fetchStats} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all">
-          <RefreshCcw className="w-5 h-5" /> Retry
-        </button>
+      <div className="space-y-8 animate-in fade-in duration-500">
+        {studyProgressSection}
+        <div className="flex flex-col items-center justify-center min-h-[40vh] p-8">
+          <div className="text-red-400 text-lg mb-4">{error}</div>
+          <button onClick={fetchStats} className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all">
+            <RefreshCcw className="w-5 h-5" /> Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -128,16 +229,19 @@ const Dashboard: React.FC = () => {
   // --- Empty state ---
   if (!stats || stats.totalCompleted === 0) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] p-8 animate-in fade-in duration-500">
-        <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-12 text-center max-w-lg">
-          <div className="w-16 h-16 bg-blue-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
-            <Play className="w-8 h-8 text-blue-500" />
+      <div className="space-y-8 animate-in fade-in duration-500">
+        {studyProgressSection}
+        <div className="flex flex-col items-center justify-center min-h-[40vh] p-8">
+          <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-12 text-center max-w-lg">
+            <div className="w-16 h-16 bg-blue-500/20 rounded-2xl flex items-center justify-center mx-auto mb-6">
+              <Play className="w-8 h-8 text-blue-500" />
+            </div>
+            <h2 className="text-2xl font-bold mb-2">Welcome to DevProof!</h2>
+            <p className="text-slate-400 mb-8">Complete your first AI-powered interview to see your dashboard stats, skill progression, and interview history.</p>
+            <Link to="/interview/setup" className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold inline-flex items-center gap-2 transition-all transform hover:scale-105 shadow-lg shadow-blue-500/20">
+              <Plus className="w-5 h-5" /> Start Your First Interview
+            </Link>
           </div>
-          <h2 className="text-2xl font-bold mb-2">Welcome to DevProof!</h2>
-          <p className="text-slate-400 mb-8">Complete your first AI-powered interview to see your dashboard stats, skill progression, and interview history.</p>
-          <Link to="/interview/setup" className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold inline-flex items-center gap-2 transition-all transform hover:scale-105 shadow-lg shadow-blue-500/20">
-            <Plus className="w-5 h-5" /> Start Your First Interview
-          </Link>
         </div>
       </div>
     );
@@ -176,6 +280,57 @@ const Dashboard: React.FC = () => {
             <p className="text-sm text-slate-400 mt-1">{stat.label}</p>
           </div>
         ))}
+      </div>
+
+      {/* Study Progress */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Flashcard Stats */}
+        <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-10 h-10 rounded-xl bg-blue-500/20 flex items-center justify-center">
+              <Layers className="w-5 h-5 text-blue-500" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-100">Flashcard Stats</h3>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-2xl font-bold text-slate-100">{studyStats.cardsMastered}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalCards}</span></p>
+              <p className="text-xs text-slate-500 mt-1">Cards Mastered</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-100">{studyStats.decksStudied}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalDecks}</span></p>
+              <p className="text-xs text-slate-500 mt-1">Decks Studied</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-green-400">{studyStats.masteryRate}%</p>
+              <p className="text-xs text-slate-500 mt-1">Mastery Rate</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Quiz Stats */}
+        <div className="bg-slate-800/50 border border-slate-700 rounded-2xl p-6">
+          <div className="flex items-center gap-3 mb-5">
+            <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
+              <CircleHelp className="w-5 h-5 text-purple-500" />
+            </div>
+            <h3 className="text-lg font-bold text-slate-100">Quiz Stats</h3>
+          </div>
+          <div className="grid grid-cols-3 gap-4">
+            <div>
+              <p className="text-2xl font-bold text-slate-100">{studyStats.correctAnswers}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalQuestions}</span></p>
+              <p className="text-xs text-slate-500 mt-1">Correct Answers</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-slate-100">{studyStats.quizzesCompleted}<span className="text-sm text-slate-500 font-normal">/{studyStats.totalQuizDecks}</span></p>
+              <p className="text-xs text-slate-500 mt-1">Quizzes Completed</p>
+            </div>
+            <div>
+              <p className="text-2xl font-bold text-green-400">{studyStats.accuracyRate}%</p>
+              <p className="text-xs text-slate-500 mt-1">Accuracy Rate</p>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* Chart + Recent Activity */}

@@ -29,11 +29,16 @@ router.post('/:sessionId/evaluate', async (req, res) => {
 
     // Get session and transcripts
     const session = await Session.findOne({ id: sessionId });
-    const transcripts = await Transcript.find({ sessionId }).sort({ timestamp: 1 });
-
     if (!session) {
       return res.status(404).json({ success: false, error: 'Session not found' });
     }
+
+    // Ownership check
+    if (req.user.role !== 'admin' && session.userId && session.userId !== req.user.userId) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
+    const transcripts = await Transcript.find({ sessionId }).sort({ timestamp: 1 });
 
     const questions = session.questions || [];
 
@@ -183,9 +188,15 @@ If submitted code is available, heavily weight the coding score on actual code q
   }
 });
 
-// Get evaluation for a session
+// Get evaluation for a session (with ownership check)
 router.get('/:sessionId', async (req, res) => {
   try {
+    // Verify session ownership
+    const session = await Session.findOne({ id: req.params.sessionId });
+    if (session && req.user.role !== 'admin' && session.userId && session.userId !== req.user.userId) {
+      return res.status(403).json({ success: false, error: 'Access denied' });
+    }
+
     const evaluation = await SessionEvaluation.findOne({ sessionId: req.params.sessionId });
 
     if (!evaluation) {

@@ -1,14 +1,30 @@
 import { WebSocketServer } from 'ws';
 import { GoogleGenAI, Type } from '@google/genai';
+import jwt from 'jsonwebtoken';
 import { geminiLiveService } from '../services/geminiLiveService.js';
 import { Session } from '../models/Session.js';
 import { InterviewOrchestrator } from '../state/interviewOrchestrator.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
 export function setupWebSocketServer(server) {
   const wss = new WebSocketServer({ server, path: '/ws/interview' });
 
   wss.on('connection', async (ws, req) => {
-    console.log('🔌 New WebSocket connection');
+    // Verify JWT from query string
+    let user;
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const token = url.searchParams.get('token');
+      if (!token) throw new Error('No token provided');
+      user = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      console.log('🚫 WebSocket auth failed:', err.message);
+      ws.close(4001, 'Authentication required');
+      return;
+    }
+
+    console.log(`🔌 New WebSocket connection (user: ${user.email})`);
 
     let sessionId = null;
     let liveSession = null;
@@ -49,6 +65,13 @@ export function setupWebSocketServer(server) {
                   type: 'error',
                   error: 'Session not found'
                 });
+                return;
+              }
+
+              // Verify session ownership (admin can access any)
+              if (user.role !== 'admin' && session.userId && session.userId !== user.userId) {
+                safeSend({ type: 'error', error: 'Access denied' });
+                ws.close(4003, 'Access denied');
                 return;
               }
 

@@ -1,18 +1,33 @@
 
 import React, { useState } from 'react';
 import { FileText, Search, ShieldCheck, Zap, AlertCircle } from 'lucide-react';
-import { geminiService } from '../services/geminiService';
+import { useAuthStore } from '../store/authStore';
+import { interviewService } from '../services/interviewService';
 
 const Analyzer: React.FC = () => {
+  const user = useAuthStore((s) => s.user);
   const [resume, setResume] = useState('');
   const [analysis, setAnalysis] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingSavedResume, setLoadingSavedResume] = useState(false);
+
+  const handleUseSavedResume = async () => {
+    setLoadingSavedResume(true);
+    try {
+      const { extractedText } = await interviewService.getSavedResumeText();
+      setResume(extractedText);
+    } catch (err) {
+      console.error('Failed to load saved resume:', err);
+    } finally {
+      setLoadingSavedResume(false);
+    }
+  };
 
   const handleAnalyze = async () => {
     if (!resume) return;
     setLoading(true);
     try {
-      const result = await geminiService.analyzeResume(resume);
+      const result = await interviewService.analyzeResume(resume);
       setAnalysis(result);
     } catch (e) {
       console.error(e);
@@ -36,6 +51,20 @@ const Analyzer: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="space-y-4">
+          {user?.resume && (
+            <button
+              onClick={handleUseSavedResume}
+              disabled={loadingSavedResume}
+              className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-blue-600/10 text-blue-400 rounded-xl hover:bg-blue-600/20 transition-all border border-blue-500/20 disabled:opacity-50"
+            >
+              {loadingSavedResume ? (
+                <div className="w-3.5 h-3.5 border-2 border-blue-400/20 border-t-blue-400 rounded-full animate-spin" />
+              ) : (
+                <FileText className="w-3.5 h-3.5" />
+              )}
+              Use Saved Resume ({user.resume.fileName})
+            </button>
+          )}
           <textarea
             value={resume}
             onChange={(e) => setResume(e.target.value)}

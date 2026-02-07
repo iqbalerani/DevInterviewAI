@@ -148,7 +148,7 @@ const Results: React.FC = () => {
             This may occur if the interview was ended early or no responses were recorded.
           </p>
           <Link
-            to="/"
+            to="/dashboard"
             className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 rounded-xl font-bold hover:bg-blue-700 transition-all"
           >
             <Home className="w-5 h-5" />
@@ -591,7 +591,7 @@ const Results: React.FC = () => {
               Retake
             </Link>
             <Link
-              to="/"
+              to="/dashboard"
               onClick={resetSession}
               className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 py-4 rounded-2xl font-bold transition-all"
             >

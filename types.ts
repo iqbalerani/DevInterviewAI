@@ -106,3 +106,113 @@ export interface DashboardStats {
   recentSessions: DashboardSession[];
   skillProgression: SkillProgressionPoint[];
 }
+
+// Flashcard types
+
+export type FlashcardDifficulty = 'beginner' | 'intermediate' | 'advanced';
+export type FlashcardStatus = 'unseen' | 'learning' | 'mastered';
+
+export interface Flashcard {
+  id: string;
+  front: string;
+  back: string;
+  codeSnippet?: string;
+  difficulty: FlashcardDifficulty;
+  tags: string[];
+}
+
+export interface FlashcardDeck {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  gradient: string;
+  cards: Flashcard[];
+  category: string;
+}
+
+export interface FlashcardProgress {
+  deckId: string;
+  cardStatuses: Record<string, FlashcardStatus>;
+  lastStudiedAt: number;
+  currentIndex: number;
+}
+
+// Quiz types
+
+export type QuizDifficulty = 'beginner' | 'intermediate' | 'advanced';
+export type QuizAnswerStatus = 'correct' | 'incorrect' | 'unanswered';
+
+export interface QuizOption {
+  id: string;
+  text: string;
+}
+
+export interface QuizQuestion {
+  id: string;
+  question: string;
+  options: QuizOption[];
+  correctOptionId: string;
+  explanation: string;
+  codeSnippet?: string;
+  difficulty: QuizDifficulty;
+  tags: string[];
+}
+
+export interface QuizDeck {
+  id: string;
+  title: string;
+  description: string;
+  icon: string;
+  gradient: string;
+  questions: QuizQuestion[];
+  category: string;
+}
+
+export interface QuizProgress {
+  deckId: string;
+  answers: Record<string, { selectedOptionId: string | null; status: QuizAnswerStatus }>;
+  lastAttemptedAt: number;
+  currentIndex: number;
+  completedAt?: number;
+}
+
+// Auth types
+
+export interface ResumeMetadata {
+  fileName: string;
+  fileType: string;
+  uploadedAt: string;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  fullName: string;
+  role: 'user' | 'admin';
+  interviewsThisWeek: number;
+  weekResetDate: string;
+  resume: ResumeMetadata | null;
+}
+
+// Settings types
+
+export interface UserSettings {
+  fullName: string;
+  email: string;
+  role: string;
+  bio: string;
+  avatarColor: string;
+
+  defaultDifficulty: 'junior' | 'mid' | 'senior';
+  sessionDuration: number;
+  preferredLanguage: string;
+
+  emailNotifications: boolean;
+  interviewReminders: boolean;
+  weeklyProgress: boolean;
+  achievementAlerts: boolean;
+
+  theme: 'dark' | 'system';
+  accentColor: string;
+}

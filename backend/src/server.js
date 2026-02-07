@@ -5,11 +5,14 @@ import compression from 'compression';
 import { createServer } from 'http';
 import { connectDatabase } from './db/connection.js';
 import { setupWebSocketServer } from './websocket/interviewHandler.js';
+import authRouter from './routes/auth.js';
+import { authMiddleware } from './middleware/auth.js';
 import sessionsRouter from './routes/sessions.js';
 import transcriptsRouter from './routes/transcripts.js';
 import evaluationsRouter from './routes/evaluations.js';
 import resumeRouter from './routes/resume.js';
 import dashboardRouter from './routes/dashboard.js';
+import userResumeRouter from './routes/userResume.js';
 // Initialize evaluation queue worker
 import './queues/evaluationQueue.js';
 
@@ -34,11 +37,13 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes
-app.use('/api/sessions', sessionsRouter);
-app.use('/api/transcripts', transcriptsRouter);
-app.use('/api/evaluations', evaluationsRouter);
-app.use('/api/resume', resumeRouter);
-app.use('/api/dashboard', dashboardRouter);
+app.use('/api/auth', authRouter); // Public — no auth required
+app.use('/api/sessions', authMiddleware, sessionsRouter);
+app.use('/api/transcripts', authMiddleware, transcriptsRouter);
+app.use('/api/evaluations', authMiddleware, evaluationsRouter);
+app.use('/api/resume', authMiddleware, resumeRouter);
+app.use('/api/dashboard', authMiddleware, dashboardRouter);
+app.use('/api/user/resume', authMiddleware, userResumeRouter);
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -10,8 +10,9 @@ const router = express.Router();
  */
 router.get('/stats', async (req, res) => {
   try {
-    // Fetch all sessions (newest first)
-    const sessions = await Session.find().sort({ createdAt: -1 }).lean();
+    // Fetch sessions (filtered by user, admin sees all)
+    const filter = req.user.role === 'admin' ? {} : { userId: req.user.userId };
+    const sessions = await Session.find(filter).sort({ createdAt: -1 }).lean();
     const completedSessions = sessions.filter(s => s.status === 'completed');
     const completedIds = completedSessions.map(s => s.id);
 

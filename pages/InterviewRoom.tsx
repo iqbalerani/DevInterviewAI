@@ -29,6 +29,8 @@ const InterviewRoom: React.FC = () => {
 
   const timerRef = useRef<number | null>(null);
   const questionExpiredSentRef = useRef(false);
+  const codeRef = useRef(code);
+  codeRef.current = code;
 
   const currentQuestion = session?.questions[session.currentQuestionIndex];
 
@@ -75,6 +77,11 @@ const InterviewRoom: React.FC = () => {
   useEffect(() => {
     setQuestionTimeLeft(QUESTION_TIME_SECONDS);
     questionExpiredSentRef.current = false;
+    // Reset code editor for new question
+    setCode('// Your code here...');
+    setOutput('');
+    setCodeScore(null);
+    setIsRunningCode(false);
   }, [currentQuestionIndex]);
 
   // Register code event callback
@@ -110,6 +117,10 @@ const InterviewRoom: React.FC = () => {
           const next = prev - 1;
           if (next <= 0 && !questionExpiredSentRef.current) {
             questionExpiredSentRef.current = true;
+            // Auto-save code for coding questions before transitioning
+            if (session?.phase === 'coding') {
+              sendMessage({ type: 'submit_code', code: codeRef.current, language: 'python' });
+            }
             sendMessage({ type: 'question_time_expired' });
           }
           return Math.max(0, next);
@@ -149,13 +160,22 @@ const InterviewRoom: React.FC = () => {
     sendMessage({ type: 'run_code', code, language: 'python' });
   };
 
+  const isLastQuestion = (session?.currentQuestionIndex ?? 0) >= (session?.questions?.length ?? 1) - 1;
+
   const handleFinishInterview = () => {
     setIsSubmittingCode(true);
     sendMessage({ type: 'submit_code', code, language: 'python' });
     // Safety timeout — proceed even if WS response is delayed
     setTimeout(() => {
       setIsSubmittingCode(false);
-      handleCompleteInterview();
+      if (isLastQuestion) {
+        handleCompleteInterview();
+      } else {
+        sendMessage({ type: 'next_question' });
+        setCode('// Your code here...');
+        setOutput('');
+        setCodeScore(null);
+      }
     }, 1500);
   };
 
@@ -391,8 +411,8 @@ const InterviewRoom: React.FC = () => {
                       disabled={isSubmittingCode}
                       className={`text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg active:scale-95 flex items-center gap-2 ${isSubmittingCode ? 'bg-blue-800 cursor-not-allowed opacity-70 shadow-none' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'}`}
                     >
-                      {isSubmittingCode ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                      {isSubmittingCode ? 'SAVING...' : 'FINISH INTERVIEW'}
+                      {isSubmittingCode ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isLastQuestion ? <CheckCircle className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      {isSubmittingCode ? 'SAVING...' : isLastQuestion ? 'FINISH INTERVIEW' : 'SUBMIT & NEXT'}
                     </button>
                   </div>
                 </div>
