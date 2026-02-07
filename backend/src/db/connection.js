@@ -1,15 +1,21 @@
 import mongoose from 'mongoose';
 
 export async function connectDatabase() {
-  try {
-    const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/devproof';
+  const uri = process.env.MONGODB_URI || 'mongodb://localhost:27017/devproof';
 
-    await mongoose.connect(uri);
+  if (uri.includes('localhost') && process.env.NODE_ENV === 'production') {
+    console.warn('⚠️  MONGODB_URI points to localhost in production. Set MONGODB_URI env var to your Atlas/remote URI.');
+  }
+
+  try {
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 10000,
+    });
 
     console.log('✅ MongoDB connected successfully');
   } catch (error) {
-    console.error('❌ MongoDB connection error:', error);
-    process.exit(1);
+    console.error('❌ MongoDB connection error:', error.message);
+    throw error;
   }
 }
 
