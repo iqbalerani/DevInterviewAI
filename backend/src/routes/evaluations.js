@@ -6,6 +6,44 @@ import { Session } from '../models/Session.js';
 
 const router = express.Router();
 
+// Get all certificates (evaluations with overallScore > 50) for the current user
+router.get('/', async (req, res) => {
+  try {
+    // Build session query based on role
+    const sessionQuery = req.user.role === 'admin' ? {} : { userId: req.user.userId };
+    const sessions = await Session.find(sessionQuery).sort({ createdAt: -1 });
+
+    const sessionIds = sessions.map(s => s.id);
+    const evaluations = await SessionEvaluation.find({
+      sessionId: { $in: sessionIds },
+      overallScore: { $gt: 50 }
+    });
+
+    // Build a map for quick lookup
+    const evalMap = new Map(evaluations.map(e => [e.sessionId, e]));
+
+    const certificates = sessions
+      .filter(s => evalMap.has(s.id))
+      .map(s => {
+        const ev = evalMap.get(s.id);
+        return {
+          sessionId: s.id,
+          jobDescription: s.jobDescription || 'Technical Interview',
+          overallScore: ev.overallScore,
+          scores: ev.scores,
+          strengths: ev.strengths || [],
+          date: s.createdAt,
+          candidateName: s.resumeData?.contactInfo?.name || 'Candidate'
+        };
+      });
+
+    res.json({ success: true, certificates });
+  } catch (error) {
+    console.error('Error fetching certificates:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Evaluate interview session
 router.post('/:sessionId/evaluate', async (req, res) => {
   try {

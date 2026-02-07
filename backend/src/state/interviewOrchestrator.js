@@ -60,6 +60,10 @@ const createInterviewMachine = (sessionId) => createMachine({
           target: InterviewStates.TRANSITIONING,
           guard: 'hasUserResponse'
         },
+        QUESTION_CHANGED: {
+          target: InterviewStates.READY,
+          actions: 'resetUserResponse'
+        },
         INTERVIEW_COMPLETE: InterviewStates.COMPLETED
       }
     },
@@ -74,9 +78,10 @@ const createInterviewMachine = (sessionId) => createMachine({
     },
 
     [InterviewStates.USER_SPEAKING]: {
-      entry: ['lockAIOutput', 'setUserResponseFlag'],
+      entry: ['setUserResponseFlag'],
       on: {
-        USER_SPEECH_ENDED: InterviewStates.PROCESSING
+        USER_SPEECH_ENDED: InterviewStates.PROCESSING,
+        AI_SPEAKING_STARTED: InterviewStates.AI_SPEAKING
       }
     },
 
@@ -93,7 +98,8 @@ const createInterviewMachine = (sessionId) => createMachine({
       entry: 'startQuestionTransition',
       on: {
         EVALUATION_STARTED: InterviewStates.EVALUATING,
-        TRANSITION_FAILED: InterviewStates.ERROR
+        TRANSITION_FAILED: InterviewStates.ERROR,
+        AI_SPEAKING_STARTED: InterviewStates.AI_SPEAKING
       }
     },
 
@@ -102,7 +108,8 @@ const createInterviewMachine = (sessionId) => createMachine({
         QUESTION_CHANGED: {
           target: InterviewStates.READY,
           actions: 'resetUserResponse'
-        }
+        },
+        AI_SPEAKING_STARTED: InterviewStates.AI_SPEAKING
       }
     },
 
@@ -232,9 +239,9 @@ export class InterviewOrchestrator {
    */
   shouldAllowAIOutput() {
     const state = this.service.getSnapshot().value;
-    return state === InterviewStates.AI_SPEAKING ||
-           state === InterviewStates.PROCESSING ||
-           state === InterviewStates.READY;
+    return state !== InterviewStates.COMPLETED &&
+           state !== InterviewStates.ERROR &&
+           state !== InterviewStates.IDLE;
   }
 
   /**

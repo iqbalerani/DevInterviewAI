@@ -125,19 +125,14 @@ BEGIN the interview NOW by greeting and asking the question.
                   });
                 },
                 onAudioData: (audioData) => {
-                  // Fire AI_SPEAKING_STARTED on first audio chunk
+                  // ALWAYS forward AI audio to frontend — never silently drop
+                  safeSend({ type: 'audio', data: audioData });
+
+                  // Fire AI_SPEAKING_STARTED on first chunk (state tracking)
                   if (!hasAIStartedSpeaking) {
                     console.log(`🎤 AI started speaking for session ${sessionId}`);
                     orchestrator.handleEvent({ type: 'AI_SPEAKING_STARTED' });
                     hasAIStartedSpeaking = true;
-                  }
-
-                  // Guard: Only send if orchestrator allows AI output
-                  if (orchestrator && orchestrator.shouldAllowAIOutput()) {
-                    safeSend({
-                      type: 'audio',
-                      data: audioData
-                    });
                   }
                 },
                 onTranscript: (transcript) => {
@@ -151,6 +146,19 @@ BEGIN the interview NOW by greeting and asking the question.
                     type: 'partial_transcript',
                     transcript: partialTranscript
                   });
+                },
+                onTurnComplete: () => {
+                  // Safety reset: if frontend never sends ai_speaking_ended
+                  // (e.g., audio failed to play), reset after 3s grace period
+                  setTimeout(() => {
+                    if (hasAIStartedSpeaking) {
+                      console.log(`⚠️ Safety reset: hasAIStartedSpeaking for ${sessionId}`);
+                      hasAIStartedSpeaking = false;
+                      if (orchestrator.getCurrentState() === 'ai_speaking') {
+                        orchestrator.handleEvent({ type: 'AI_SPEAKING_ENDED' });
+                      }
+                    }
+                  }, 3000);
                 },
                 onInterrupted: () => {
                   safeSend({

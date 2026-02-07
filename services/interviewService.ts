@@ -98,6 +98,15 @@ export const interviewService = {
     return data.questions;
   },
 
+  async getCertificates() {
+    const response = await fetch(`${API_BASE_URL}/api/evaluations`, {
+      headers: getAuthHeaders()
+    });
+    const data = await response.json();
+    if (!data.success) throw new Error(data.error);
+    return data.certificates;
+  },
+
   async getDashboardStats() {
     const response = await fetch(`${API_BASE_URL}/api/dashboard/stats`, {
       headers: getAuthHeaders()
