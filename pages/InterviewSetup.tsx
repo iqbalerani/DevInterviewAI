@@ -1,8 +1,9 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Briefcase, Zap, CheckCircle2, Upload, BarChart3, ChevronRight, Sparkles, Cpu, ShieldCheck, Globe, AlertCircle } from 'lucide-react';
+import { FileText, Briefcase, Zap, CheckCircle2, Upload, BarChart3, ChevronRight, Sparkles, Cpu, ShieldCheck, Globe, AlertCircle, Clock } from 'lucide-react';
 import { useAppStore } from '../store';
+import { useAuthStore } from '../store/authStore';
 import { interviewService } from '../services/interviewService';
 import { InterviewPhase, InterviewSession } from '../types';
 
@@ -54,7 +55,12 @@ const LOADING_STEPS = [
 const InterviewSetup: React.FC = () => {
   const navigate = useNavigate();
   const { setSession } = useAppStore();
+  const { user, updateUser } = useAuthStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const isAdmin = user?.role === 'admin';
+  const isLimitReached = !isAdmin && (user?.interviewsThisWeek ?? 0) >= 5;
+  const remaining = isAdmin ? Infinity : 5 - (user?.interviewsThisWeek ?? 0);
   
   const [resume, setResume] = useState('');
   const [jd, setJd] = useState('');
@@ -63,6 +69,7 @@ const InterviewSetup: React.FC = () => {
   const [rankResult, setRankResult] = useState<any>(null);
   const [level, setLevel] = useState<'junior' | 'mid' | 'senior'>('mid');
   const [error, setError] = useState<string | null>(null);
+  const [loadingSavedResume, setLoadingSavedResume] = useState(false);
   
   const [loadingStep, setLoadingStep] = useState(0);
 
@@ -85,7 +92,7 @@ const InterviewSetup: React.FC = () => {
 
     try {
       // Generate interview plan via backend API
-      const plan = await interviewService.generateInterviewPlan(resume, jd);
+      const plan = await interviewService.generateInterviewPlan(resume, jd, level);
 
       if (!plan || plan.length === 0) {
         throw new Error("Could not generate a valid interview plan.");
@@ -97,14 +104,22 @@ const InterviewSetup: React.FC = () => {
       // Store session in Zustand for frontend state
       setSession(newSession);
 
+      // Update auth store with incremented interview count
+      if (user) {
+        updateUser({ interviewsThisWeek: user.interviewsThisWeek + 1 });
+      }
+
       // UX delay for the final step of loading animation
       setTimeout(() => {
         navigate(`/interview/room/${newSession.id}`);
       }, 800);
 
-    } catch (e) {
+    } catch (e: any) {
       console.error("Start Session Error:", e);
-      setError("AI was unable to generate your session. Please check your inputs and try again.");
+      const msg = e?.message?.includes('limit')
+        ? e.message
+        : "AI was unable to generate your session. Please check your inputs and try again.";
+      setError(msg);
       setIsParsing(false);
     }
   };
@@ -127,6 +142,19 @@ const InterviewSetup: React.FC = () => {
   const triggerFileSelect = (e: React.MouseEvent) => {
     e.stopPropagation();
     fileInputRef.current?.click();
+  };
+
+  const handleUseSavedResume = async () => {
+    setLoadingSavedResume(true);
+    setError(null);
+    try {
+      const { extractedText } = await interviewService.getSavedResumeText();
+      setResume(extractedText);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load saved resume');
+    } finally {
+      setLoadingSavedResume(false);
+    }
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -208,10 +236,26 @@ const InterviewSetup: React.FC = () => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         <div className="space-y-4">
-          <label className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest px-2">
-            <FileText className="w-4 h-4 text-blue-500" />
-            Candidate Resume
-          </label>
+          <div className="flex items-center justify-between px-2">
+            <label className="flex items-center gap-2 text-xs font-bold text-slate-400 uppercase tracking-widest">
+              <FileText className="w-4 h-4 text-blue-500" />
+              Candidate Resume
+            </label>
+            {user?.resume && (
+              <button
+                onClick={handleUseSavedResume}
+                disabled={loadingSavedResume}
+                className="flex items-center gap-1.5 px-3 py-1 text-[10px] font-bold bg-blue-600/10 text-blue-400 rounded-lg hover:bg-blue-600/20 transition-all border border-blue-500/20 disabled:opacity-50"
+              >
+                {loadingSavedResume ? (
+                  <div className="w-3 h-3 border-2 border-blue-400/20 border-t-blue-400 rounded-full animate-spin" />
+                ) : (
+                  <FileText className="w-3 h-3" />
+                )}
+                Use Saved Resume ({user.resume.fileName})
+              </button>
+            )}
+          </div>
           <div className="relative h-96 group rounded-[2.5rem] overflow-hidden border-2 border-slate-800 bg-slate-900/40 hover:border-slate-700 transition-all focus-within:border-blue-600 focus-within:ring-2 focus-within:ring-blue-600/20">
             <input type="file" ref={fileInputRef} className="hidden" accept=".txt,.md" onChange={handleFileChange} />
             <textarea
@@ -313,6 +357,20 @@ const InterviewSetup: React.FC = () => {
         </div>
       )}
 
+      {/* Interview limit warning */}
+      {isLimitReached && (
+        <div className="bg-amber-500/10 border border-amber-500/20 p-5 rounded-2xl flex items-center gap-4">
+          <Clock className="w-6 h-6 text-amber-400 shrink-0" />
+          <div>
+            <p className="text-amber-300 font-bold text-sm">Weekly interview limit reached</p>
+            <p className="text-slate-400 text-xs mt-1">
+              You've used all 5 interviews this week. Your limit resets on{' '}
+              {user?.weekResetDate ? new Date(user.weekResetDate).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' }) : 'next Monday'}.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="bg-[#0f172a] border border-slate-800 p-12 rounded-[3rem] shadow-2xl relative">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-10 mb-12">
           <div className="space-y-6">
@@ -346,13 +404,22 @@ const InterviewSetup: React.FC = () => {
           </div>
         </div>
 
+        {/* Remaining interviews count */}
+        {!isAdmin && (
+          <div className="text-center mb-6">
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+              {remaining > 0 ? `${remaining} of 5 interviews remaining this week` : 'No interviews remaining this week'}
+            </span>
+          </div>
+        )}
+
         <button
           onClick={handleStart}
-          disabled={!resume || !jd || isParsing}
+          disabled={!resume || !jd || isParsing || isLimitReached}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-30 disabled:cursor-not-allowed text-white py-7 rounded-[2rem] font-black text-2xl flex items-center justify-center gap-5 transition-all transform active:scale-[0.98] shadow-2xl shadow-blue-900/50 group"
         >
-          {isParsing ? 'Initializing AI Engine...' : 'Generate Practice Experience'}
-          {!isParsing && <ChevronRight className="w-7 h-7 group-hover:translate-x-2 transition-transform" />}
+          {isParsing ? 'Initializing AI Engine...' : isLimitReached ? 'Weekly Limit Reached' : 'Generate Practice Experience'}
+          {!isParsing && !isLimitReached && <ChevronRight className="w-7 h-7 group-hover:translate-x-2 transition-transform" />}
         </button>
       </div>
     </div>

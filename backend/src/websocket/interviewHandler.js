@@ -1,19 +1,42 @@
 import { WebSocketServer } from 'ws';
+import { GoogleGenAI, Type } from '@google/genai';
+import jwt from 'jsonwebtoken';
 import { geminiLiveService } from '../services/geminiLiveService.js';
 import { Session } from '../models/Session.js';
 import { InterviewOrchestrator } from '../state/interviewOrchestrator.js';
+
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 
 export function setupWebSocketServer(server) {
   const wss = new WebSocketServer({ server, path: '/ws/interview' });
 
   wss.on('connection', async (ws, req) => {
-    console.log('🔌 New WebSocket connection');
+    // Verify JWT from query string
+    let user;
+    try {
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const token = url.searchParams.get('token');
+      if (!token) throw new Error('No token provided');
+      user = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      console.log('🚫 WebSocket auth failed:', err.message);
+      ws.close(4001, 'Authentication required');
+      return;
+    }
+
+    console.log(`🔌 New WebSocket connection (user: ${user.email})`);
 
     let sessionId = null;
     let liveSession = null;
     let orchestrator = null;
     let hasAIStartedSpeaking = false; // Track if AI has begun speaking
     let autoAdvanceTimer = null; // Tracks the auto-advance timeout
+
+    const safeSend = (data) => {
+      if (ws.readyState === 1) {
+        ws.send(JSON.stringify(data));
+      }
+    };
 
     ws.on('message', async (data) => {
       try {
@@ -38,10 +61,17 @@ export function setupWebSocketServer(server) {
               // Fetch session data
               const session = await Session.findOne({ id: sessionId });
               if (!session) {
-                ws.send(JSON.stringify({
+                safeSend({
                   type: 'error',
                   error: 'Session not found'
-                }));
+                });
+                return;
+              }
+
+              // Verify session ownership (admin can access any)
+              if (user.role !== 'admin' && session.userId && session.userId !== user.userId) {
+                safeSend({ type: 'error', error: 'Access denied' });
+                ws.close(4003, 'Access denied');
                 return;
               }
 
@@ -89,60 +119,64 @@ BEGIN the interview NOW by greeting and asking the question.
                     }
                   }, 1000); // Delay to ensure connection is stable
 
-                  ws.send(JSON.stringify({
+                  safeSend({
                     type: 'connected',
                     sessionId
-                  }));
+                  });
                 },
                 onAudioData: (audioData) => {
-                  // Fire AI_SPEAKING_STARTED on first audio chunk
+                  // ALWAYS forward AI audio to frontend — never silently drop
+                  safeSend({ type: 'audio', data: audioData });
+
+                  // Fire AI_SPEAKING_STARTED on first chunk (state tracking)
                   if (!hasAIStartedSpeaking) {
                     console.log(`🎤 AI started speaking for session ${sessionId}`);
                     orchestrator.handleEvent({ type: 'AI_SPEAKING_STARTED' });
                     hasAIStartedSpeaking = true;
                   }
-
-                  // Guard: Only send if orchestrator allows AI output
-                  if (orchestrator && orchestrator.shouldAllowAIOutput()) {
-                    ws.send(JSON.stringify({
-                      type: 'audio',
-                      data: audioData
-                    }));
-                  }
                 },
                 onTranscript: (transcript) => {
-                  ws.send(JSON.stringify({
+                  safeSend({
                     type: 'transcript',
                     transcript
-                  }));
+                  });
                 },
                 onPartialTranscript: (partialTranscript) => {
-                  try {
-                    ws.send(JSON.stringify({
-                      type: 'partial_transcript',
-                      transcript: partialTranscript
-                    }));
-                  } catch (error) {
-                    // Non-critical — don't crash if WS is closing
-                  }
+                  safeSend({
+                    type: 'partial_transcript',
+                    transcript: partialTranscript
+                  });
+                },
+                onTurnComplete: () => {
+                  // Safety reset: if frontend never sends ai_speaking_ended
+                  // (e.g., audio failed to play), reset after 3s grace period
+                  setTimeout(() => {
+                    if (hasAIStartedSpeaking) {
+                      console.log(`⚠️ Safety reset: hasAIStartedSpeaking for ${sessionId}`);
+                      hasAIStartedSpeaking = false;
+                      if (orchestrator.getCurrentState() === 'ai_speaking') {
+                        orchestrator.handleEvent({ type: 'AI_SPEAKING_ENDED' });
+                      }
+                    }
+                  }, 3000);
                 },
                 onInterrupted: () => {
-                  ws.send(JSON.stringify({
+                  safeSend({
                     type: 'interrupted'
-                  }));
+                  });
                 },
                 onClose: (event) => {
-                  ws.send(JSON.stringify({
+                  safeSend({
                     type: 'disconnected',
                     code: event.code,
                     reason: event.reason
-                  }));
+                  });
                 },
                 onError: (error) => {
-                  ws.send(JSON.stringify({
+                  safeSend({
                     type: 'error',
                     error: error.message
-                  }));
+                  });
                 }
               }
             );
@@ -163,10 +197,10 @@ BEGIN the interview NOW by greeting and asking the question.
               console.error(`❌ [InterviewHandler] Error name: ${error.name}`);
               console.error(`❌ [InterviewHandler] Error message: ${error.message}`);
               console.error(`❌ [InterviewHandler] Error stack:`, error.stack);
-              ws.send(JSON.stringify({
+              safeSend({
                 type: 'error',
                 error: 'Failed to connect session: ' + error.message
-              }));
+              });
             }
             break;
           }
@@ -253,24 +287,163 @@ BEGIN the interview NOW by greeting and asking the question.
                     const result = await orchestrator.transitionQuestion();
 
                     if (result && !result.complete) {
-                      ws.send(JSON.stringify({
+                      safeSend({
                         type: 'question_changed',
                         questionIndex: session.currentQuestionIndex + 1,
                         question: result.nextQuestion
-                      }));
+                      });
                     }
                   } else {
                     console.log('🎉 Last question complete, finishing interview');
                     orchestrator.handleEvent({ type: 'COMPLETE' });
-                    ws.send(JSON.stringify({
+                    safeSend({
                       type: 'interview_complete',
                       sessionId
-                    }));
+                    });
                   }
                 } catch (error) {
                   console.error('❌ Auto-transition error:', error);
                 }
               }, 10000);
+            }
+            break;
+          }
+
+          case 'question_time_expired': {
+            try {
+              console.log(`⏰ Question time expired for session ${sessionId}`);
+
+              if (!orchestrator) break;
+
+              // Cancel any pending auto-advance timer
+              if (autoAdvanceTimer) {
+                clearTimeout(autoAdvanceTimer);
+                autoAdvanceTimer = null;
+              }
+
+              const session = await Session.findOne({ id: sessionId });
+              if (!session) break;
+
+              if (session.currentQuestionIndex >= session.questions.length - 1) {
+                // Last question — complete interview
+                console.log('⏰ Last question time expired, finishing interview');
+                orchestrator.handleEvent({ type: 'COMPLETE' });
+                safeSend({ type: 'interview_complete', sessionId });
+              } else {
+                const result = await orchestrator.transitionQuestion();
+                if (result && result.complete) {
+                  safeSend({ type: 'interview_complete', sessionId });
+                } else if (result && result.success) {
+                  safeSend({
+                    type: 'question_changed',
+                    questionIndex: result.questionIndex,
+                    question: result.nextQuestion
+                  });
+                }
+              }
+            } catch (error) {
+              console.error('⏰ Question time expired transition error:', error);
+            }
+            break;
+          }
+
+          case 'run_code': {
+            try {
+              console.log(`🧪 Running code analysis for session ${sessionId}`);
+              safeSend({ type: 'code_running' });
+
+              const session = await Session.findOne({ id: sessionId });
+              if (!session) {
+                safeSend({ type: 'code_result', testResults: [], summary: 'Session not found', score: 0 });
+                break;
+              }
+
+              const currentQ = session.questions[session.currentQuestionIndex];
+              const testCasesText = currentQ?.testCases?.length
+                ? currentQ.testCases.map((tc, i) => `Test ${i + 1}: Input: ${tc.input} → Expected: ${tc.expectedOutput}`).join('\n')
+                : 'No specific test cases provided. Evaluate correctness based on the problem description.';
+
+              const codeAnalysisAi = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+              const analysisResponse = await codeAnalysisAi.models.generateContent({
+                model: 'gemini-2.0-flash',
+                contents: `You are a code evaluator. Analyze this code submission against the given problem and test cases.
+
+## Problem
+${currentQ?.text || 'Unknown problem'}
+
+## Test Cases
+${testCasesText}
+
+## Submitted Code (${message.language || 'python'})
+\`\`\`${message.language || 'python'}
+${message.code}
+\`\`\`
+
+Trace through the code logic for each test case. Determine if it would produce the expected output. Be accurate in your analysis.`,
+                config: {
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                      testResults: {
+                        type: Type.ARRAY,
+                        items: {
+                          type: Type.OBJECT,
+                          properties: {
+                            testCase: { type: Type.STRING },
+                            passed: { type: Type.BOOLEAN },
+                            actualOutput: { type: Type.STRING },
+                            explanation: { type: Type.STRING }
+                          },
+                          required: ['testCase', 'passed', 'actualOutput', 'explanation']
+                        }
+                      },
+                      summary: { type: Type.STRING },
+                      score: { type: Type.NUMBER }
+                    },
+                    required: ['testResults', 'summary', 'score']
+                  }
+                }
+              });
+
+              const analysisResult = JSON.parse(analysisResponse.text);
+
+              // Save code to session
+              await Session.findOneAndUpdate(
+                { id: sessionId, 'questions.id': currentQ.id },
+                { $set: { 'questions.$.submittedCode': message.code, 'questions.$.codeLanguage': message.language || 'python' } }
+              );
+
+              safeSend({
+                type: 'code_result',
+                testResults: analysisResult.testResults,
+                summary: analysisResult.summary,
+                score: analysisResult.score
+              });
+            } catch (error) {
+              console.error('❌ Code analysis error:', error);
+              safeSend({ type: 'code_result', testResults: [], summary: 'Analysis failed: ' + error.message, score: 0 });
+            }
+            break;
+          }
+
+          case 'submit_code': {
+            try {
+              console.log(`💾 Submitting code for session ${sessionId}`);
+              const session = await Session.findOne({ id: sessionId });
+              if (session) {
+                const currentQ = session.questions[session.currentQuestionIndex];
+                if (currentQ) {
+                  await Session.findOneAndUpdate(
+                    { id: sessionId, 'questions.id': currentQ.id },
+                    { $set: { 'questions.$.submittedCode': message.code, 'questions.$.codeLanguage': message.language || 'python' } }
+                  );
+                }
+              }
+              safeSend({ type: 'code_submitted' });
+            } catch (error) {
+              console.error('❌ Code submit error:', error);
+              safeSend({ type: 'code_submitted' }); // Always respond to not block disconnect
             }
             break;
           }
@@ -285,25 +458,26 @@ BEGIN the interview NOW by greeting and asking the question.
 
               const result = await orchestrator.transitionQuestion();
 
-              if (result && result.success) {
-                ws.send(JSON.stringify({
+              if (result && result.complete) {
+                safeSend({
+                  type: 'interview_complete',
+                  sessionId
+                });
+              } else if (result && result.success) {
+                safeSend({
                   type: 'question_changed',
                   questionIndex: result.questionIndex,
-                  question: result.question
-                }));
-              } else if (result && result.complete) {
-                ws.send(JSON.stringify({
-                  type: 'interview_complete'
-                }));
+                  question: result.nextQuestion
+                });
               } else {
                 throw new Error('Failed to transition question');
               }
             } catch (error) {
               console.error('❌ Next question error:', error);
-              ws.send(JSON.stringify({
+              safeSend({
                 type: 'error',
                 error: 'Failed to move to next question: ' + error.message
-              }));
+              });
             }
             break;
           }
@@ -332,7 +506,7 @@ BEGIN the interview NOW by greeting and asking the question.
                 { id: sessionId },
                 { status: 'completed', endTime: new Date() }
               );
-              ws.send(JSON.stringify({ type: 'disconnected' }));
+              safeSend({ type: 'disconnected' });
             }
             break;
           }
@@ -343,14 +517,10 @@ BEGIN the interview NOW by greeting and asking the question.
       } catch (parseError) {
         console.error('❌ WebSocket message parse error:', parseError);
         // Don't crash - send error to client
-        try {
-          ws.send(JSON.stringify({
-            type: 'error',
-            error: 'Invalid message format: ' + parseError.message
-          }));
-        } catch (sendError) {
-          console.error('❌ Failed to send error message:', sendError);
-        }
+        safeSend({
+          type: 'error',
+          error: 'Invalid message format: ' + parseError.message
+        });
       }
     });
 

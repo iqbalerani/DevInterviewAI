@@ -95,6 +95,7 @@ export class GeminiLiveService {
                 });
                 currentTranscription.ai = '';
               }
+              callbacks.onTurnComplete?.();
             }
 
             // Forward audio data to client

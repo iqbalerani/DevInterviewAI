@@ -5,7 +5,7 @@ import { useRef, useCallback } from 'react';
  */
 const VAD_CONFIG = {
   silenceThreshold: 0.05,      // Audio level below this = silence (reduced sensitivity)
-  endOfUtteranceMs: 5000,      // 5 seconds of silence to detect end of user response
+  endOfUtteranceMs: 2000,      // 2 seconds of silence to detect end of user response
   hardFallbackMs: 60000        // 60 second hard timeout per question
 };
 

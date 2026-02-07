@@ -9,6 +9,7 @@ import { interviewService } from '../services/interviewService';
 import { InterviewPhase } from '../types';
 
 const SESSION_LIMIT_SECONDS = 900; // 15 minutes max session duration
+const QUESTION_TIME_SECONDS = 30; // 30 seconds per question
 
 const InterviewRoom: React.FC = () => {
   const { sessionId } = useParams();
@@ -18,16 +19,22 @@ const InterviewRoom: React.FC = () => {
   const [isMicOn, setIsMicOn] = useState(true);
   const [code, setCode] = useState('// Your code here...');
   const [output, setOutput] = useState('');
-  const [phaseSeconds, setPhaseSeconds] = useState(0);
-  const [totalSeconds, setTotalSeconds] = useState(0);
+  const [questionTimeLeft, setQuestionTimeLeft] = useState(QUESTION_TIME_SECONDS);
+  const [totalTimeLeft, setTotalTimeLeft] = useState(SESSION_LIMIT_SECONDS);
   const [hasStartedRoom, setHasStartedRoom] = useState(false);
   const [isLoadingSession, setIsLoadingSession] = useState(false);
+  const [isRunningCode, setIsRunningCode] = useState(false);
+  const [codeScore, setCodeScore] = useState<number | null>(null);
+  const [isSubmittingCode, setIsSubmittingCode] = useState(false);
 
   const timerRef = useRef<number | null>(null);
+  const questionExpiredSentRef = useRef(false);
+  const codeRef = useRef(code);
+  codeRef.current = code;
 
   const currentQuestion = session?.questions[session.currentQuestionIndex];
 
-  const { status, connect, disconnect, sendMessage } = useInterviewWebSocket(sessionId || '');
+  const { status, connect, disconnect, sendMessage, onCodeEvent } = useInterviewWebSocket(sessionId || '');
   const isConnected = status === 'connected';
 
   // Initial setup: Session Check and Load
@@ -65,18 +72,65 @@ const InterviewRoom: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, navigate]); // sessionId and navigate dependencies
 
+  // Reset question countdown when question changes
+  const currentQuestionIndex = session?.currentQuestionIndex ?? 0;
+  useEffect(() => {
+    setQuestionTimeLeft(QUESTION_TIME_SECONDS);
+    questionExpiredSentRef.current = false;
+    // Reset code editor for new question
+    setCode('// Your code here...');
+    setOutput('');
+    setCodeScore(null);
+    setIsRunningCode(false);
+  }, [currentQuestionIndex]);
+
+  // Register code event callback
+  useEffect(() => {
+    onCodeEvent((type, data) => {
+      if (type === 'running') {
+        setIsRunningCode(true);
+        setOutput('[Analyzing code with AI...]\n\nTracing logic through test cases...');
+      } else if (type === 'result') {
+        setIsRunningCode(false);
+        setCodeScore(data?.score ?? null);
+        let resultText = '';
+        if (data?.testResults?.length) {
+          resultText = data.testResults.map((tr: any, i: number) =>
+            `${tr.passed ? 'PASS' : 'FAIL'} Test ${i + 1}: ${tr.testCase}\n  Output: ${tr.actualOutput}\n  ${tr.explanation}`
+          ).join('\n\n');
+        }
+        if (data?.summary) resultText += `\n\n--- Summary ---\n${data.summary}`;
+        if (data?.score !== undefined) resultText += `\n\nScore: ${data.score}/100`;
+        setOutput(resultText || 'Analysis complete.');
+      } else if (type === 'submitted') {
+        setIsSubmittingCode(false);
+      }
+    });
+  }, [onCodeEvent]);
+
   // Master Timer Logic: Starts only when Audio Room is joined
   useEffect(() => {
     if (isConnected && hasStartedRoom) {
       console.log("Interview timers started.");
       timerRef.current = window.setInterval(() => {
-        setPhaseSeconds(prev => prev + 1);
-        setTotalSeconds(prev => {
-          const next = prev + 1;
-          if (next >= SESSION_LIMIT_SECONDS) {
-            handleCompleteInterview(); 
+        setQuestionTimeLeft(prev => {
+          const next = prev - 1;
+          if (next <= 0 && !questionExpiredSentRef.current) {
+            questionExpiredSentRef.current = true;
+            // Auto-save code for coding questions before transitioning
+            if (session?.phase === 'coding') {
+              sendMessage({ type: 'submit_code', code: codeRef.current, language: 'python' });
+            }
+            sendMessage({ type: 'question_time_expired' });
           }
-          return next;
+          return Math.max(0, next);
+        });
+        setTotalTimeLeft(prev => {
+          const next = prev - 1;
+          if (next <= 0) {
+            handleCompleteInterview();
+          }
+          return Math.max(0, next);
         });
       }, 1000);
     } else {
@@ -85,6 +139,7 @@ const InterviewRoom: React.FC = () => {
     return () => {
       if (timerRef.current) window.clearInterval(timerRef.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, hasStartedRoom]);
 
   const handleJoinAudio = async () => {
@@ -98,7 +153,30 @@ const InterviewRoom: React.FC = () => {
   };
 
   const handleRunCode = () => {
-    setOutput(`[Executing Test Suite...]\n\nPASS test_case_1\nPASS test_case_2\nFAIL test_case_3 (Expected output mismatch)\n\nReviewing code logic... Done.`);
+    if (isRunningCode) return;
+    setIsRunningCode(true);
+    setCodeScore(null);
+    setOutput('[Submitting code for AI analysis...]\n');
+    sendMessage({ type: 'run_code', code, language: 'python' });
+  };
+
+  const isLastQuestion = (session?.currentQuestionIndex ?? 0) >= (session?.questions?.length ?? 1) - 1;
+
+  const handleFinishInterview = () => {
+    setIsSubmittingCode(true);
+    sendMessage({ type: 'submit_code', code, language: 'python' });
+    // Safety timeout — proceed even if WS response is delayed
+    setTimeout(() => {
+      setIsSubmittingCode(false);
+      if (isLastQuestion) {
+        handleCompleteInterview();
+      } else {
+        sendMessage({ type: 'next_question' });
+        setCode('// Your code here...');
+        setOutput('');
+        setCodeScore(null);
+      }
+    }, 1500);
   };
 
   const handleCompleteInterview = () => {
@@ -118,9 +196,6 @@ const InterviewRoom: React.FC = () => {
       // 4. Notify frontend of question change
       sendMessage({ type: 'next_question' });
 
-      // Reset phase timer
-      setPhaseSeconds(0);
-
     } catch (error) {
       console.error('Next phase error:', error);
     }
@@ -132,7 +207,8 @@ const InterviewRoom: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const isNearingLimit = totalSeconds > SESSION_LIMIT_SECONDS - 15;
+  const isNearingLimit = totalTimeLeft <= 15;
+  const isQuestionNearingLimit = questionTimeLeft <= 15 && questionTimeLeft > 0;
 
   // Loading state while fetching session
   if (isLoadingSession || !session || !currentQuestion) {
@@ -162,9 +238,11 @@ const InterviewRoom: React.FC = () => {
           <div className="h-6 w-px bg-slate-800" />
           <div className={`flex items-center gap-2 font-mono text-sm px-3 py-1 rounded-lg transition-all duration-300 ${isNearingLimit ? 'text-white bg-red-600 animate-pulse' : hasStartedRoom ? 'text-blue-400 bg-blue-500/10' : 'text-slate-600 bg-slate-800'}`}>
             <Clock className="w-4 h-4" />
-            <span className="w-16">P: {formatTime(phaseSeconds)}</span>
+            <span className={`w-20 ${isQuestionNearingLimit ? 'text-amber-400 animate-pulse font-bold' : ''}`}>
+              Q: {formatTime(questionTimeLeft)}
+            </span>
             <span className="opacity-30 mx-1">|</span>
-            <span className="w-16">T: {formatTime(totalSeconds)}</span>
+            <span className="w-24">Total: {formatTime(totalTimeLeft)}</span>
           </div>
         </div>
 
@@ -322,20 +400,19 @@ const InterviewRoom: React.FC = () => {
                   <div className="flex items-center gap-3">
                     <button
                       onClick={handleRunCode}
-                      className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg shadow-green-600/20 active:scale-95 flex items-center gap-2"
+                      disabled={isRunningCode}
+                      className={`text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg active:scale-95 flex items-center gap-2 ${isRunningCode ? 'bg-green-800 cursor-not-allowed opacity-70 shadow-none' : 'bg-green-600 hover:bg-green-700 shadow-green-600/20'}`}
                     >
-                      <Play className="w-3.5 h-3.5 fill-white" />
-                      RUN TESTS
+                      {isRunningCode ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 fill-white" />}
+                      {isRunningCode ? 'ANALYZING...' : 'RUN TESTS'}
                     </button>
                     <button
-                      onClick={() => {
-                        sendMessage({ type: 'disconnect' });
-                        handleCompleteInterview();
-                      }}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg shadow-blue-600/20 active:scale-95 flex items-center gap-2"
+                      onClick={handleFinishInterview}
+                      disabled={isSubmittingCode}
+                      className={`text-white px-6 py-2 rounded-xl text-xs font-black transition-all shadow-lg active:scale-95 flex items-center gap-2 ${isSubmittingCode ? 'bg-blue-800 cursor-not-allowed opacity-70 shadow-none' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'}`}
                     >
-                      <CheckCircle className="w-3.5 h-3.5" />
-                      FINISH INTERVIEW
+                      {isSubmittingCode ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : isLastQuestion ? <CheckCircle className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      {isSubmittingCode ? 'SAVING...' : isLastQuestion ? 'FINISH INTERVIEW' : 'SUBMIT & NEXT'}
                     </button>
                   </div>
                 </div>

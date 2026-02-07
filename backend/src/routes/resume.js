@@ -76,7 +76,7 @@ router.post('/match-score', async (req, res) => {
  */
 router.post('/generate-plan', async (req, res) => {
   try {
-    const { resume, jd } = req.body;
+    const { resume, jd, difficulty } = req.body;
 
     if (!resume || !jd) {
       return res.status(400).json({
@@ -85,6 +85,7 @@ router.post('/generate-plan', async (req, res) => {
       });
     }
 
+    const selectedDifficulty = difficulty || 'mid';
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
     const safeResume = resume.substring(0, 2500);
@@ -94,8 +95,15 @@ router.post('/generate-plan', async (req, res) => {
       Create a tailored technical interview plan for this candidate.
       Generate exactly 5 questions:
       - 1 Behavioral (soft skills/experience)
-      - 2 Technical Conceptual (architecture, language specifics, systems)
-      - 2 Coding Challenges (algorithms or problem-solving)
+      - 3 Technical Conceptual (architecture, language specifics, systems)
+      - 1 Coding Challenge (algorithms or problem-solving)
+
+      All questions MUST be at the "${selectedDifficulty}" seniority level.
+      - junior: fundamental concepts, basic syntax, straightforward problems
+      - mid: intermediate design patterns, moderate algorithms, system tradeoffs
+      - senior: advanced architecture, complex algorithms, distributed systems, leadership scenarios
+
+      For each coding question, include 3-5 test cases with input/expected output pairs covering normal and edge cases.
 
       Resume: ${safeResume}
       JD: ${safeJd}
@@ -115,8 +123,19 @@ router.post('/generate-plan', async (req, res) => {
               id: { type: Type.STRING },
               text: { type: Type.STRING },
               type: { type: Type.STRING, description: 'behavioral, technical, or coding' },
-              difficulty: { type: Type.STRING, description: 'junior, mid, or senior' },
-              expectedTopics: { type: Type.ARRAY, items: { type: Type.STRING } }
+              difficulty: { type: Type.STRING, description: `Must be "${selectedDifficulty}"` },
+              expectedTopics: { type: Type.ARRAY, items: { type: Type.STRING } },
+              testCases: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    input: { type: Type.STRING },
+                    expectedOutput: { type: Type.STRING }
+                  },
+                  required: ['input', 'expectedOutput']
+                }
+              }
             },
             required: ['id', 'text', 'type', 'difficulty']
           }
@@ -127,8 +146,8 @@ router.post('/generate-plan', async (req, res) => {
     const questions = extractJson(response.text);
 
     // Fallback if generation fails
-    if (!questions || questions.length === 0) {
-      throw new Error('Generated plan is empty');
+    if (!questions || questions.length < 5) {
+      throw new Error(`Generated plan has ${questions?.length ?? 0} questions, expected 5`);
     }
 
     res.json({ success: true, questions });
@@ -136,13 +155,18 @@ router.post('/generate-plan', async (req, res) => {
   } catch (error) {
     console.error('Plan Generation Error:', error);
 
-    // Return fallback questions
+    // Return fallback questions using the requested difficulty
+    const fallbackDifficulty = req.body.difficulty || 'mid';
     const fallbackQuestions = [
-      { id: '1', text: 'Tell me about a difficult technical challenge you solved recently.', type: 'behavioral', difficulty: 'mid' },
-      { id: '2', text: 'Explain the concept of Big O notation and why it matters.', type: 'technical', difficulty: 'mid' },
-      { id: '3', text: 'What is the difference between a process and a thread in a modern OS?', type: 'technical', difficulty: 'mid' },
-      { id: '4', text: 'Write a function to find the first non-repeating character in a string.', type: 'coding', difficulty: 'mid' },
-      { id: '5', text: 'Implement a function to reverse a linked list.', type: 'coding', difficulty: 'mid' }
+      { id: '1', text: 'Tell me about a difficult technical challenge you solved recently.', type: 'behavioral', difficulty: fallbackDifficulty },
+      { id: '2', text: 'Explain the concept of Big O notation and why it matters.', type: 'technical', difficulty: fallbackDifficulty },
+      { id: '3', text: 'What is the difference between a process and a thread in a modern OS?', type: 'technical', difficulty: fallbackDifficulty },
+      { id: '4', text: 'Describe how you would design a caching layer for a high-traffic web application.', type: 'technical', difficulty: fallbackDifficulty },
+      { id: '5', text: 'Write a function to find the first non-repeating character in a string.', type: 'coding', difficulty: fallbackDifficulty, testCases: [
+        { input: '"aabcbd"', expectedOutput: '"c"' },
+        { input: '"abcabc"', expectedOutput: 'null or None' },
+        { input: '"a"', expectedOutput: '"a"' }
+      ]}
     ];
 
     res.json({
