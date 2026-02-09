@@ -302,7 +302,3 @@ DevProofAI/
 ├── CLAUDE.md
 └── README.md
 ```
-
-## License
-
-MIT
